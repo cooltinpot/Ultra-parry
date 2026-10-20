@@ -102,6 +102,14 @@ body {
 #ocRank { font-size: 24px; }
 #ocBonus { font: italic 800 15px var(--body); color: #000; flex-basis: 100%; }
 .breakdown { font: italic 800 13px/1.4 var(--body); color: #222; max-width: 36ch; text-wrap: balance; }
+/* menu footer: sound switch + offline status */
+.menu-foot { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.offline { display: flex; align-items: center; gap: 8px; margin: 0; font: italic 800 13px/1.3 var(--body); color: #222; max-width: 34ch; text-align: left; }
+.offline i { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #000; background: #2fbf4a; }
+.offline.saving i { background: #ffb000; animation: blink 0.9s steps(2) infinite; }
+.offline.off i { background: #4d8bff; }
+@keyframes blink { 50% { opacity: 0.25; } }
+.big.small { font-size: 17px; padding: 10px 20px; box-shadow: -6px 6px 0 #000; }
 .tag { max-width: 30ch; color: #222; font: italic 800 17px/1.35 var(--body); margin: 0; text-wrap: balance; }
 .label { font: italic 800 12px var(--body); letter-spacing: 0.16em; text-transform: uppercase; color: #555; margin-bottom: -10px; }
 .diff { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
@@ -162,6 +170,7 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
   </div>
 
   <div id="menu" class="overlay">
+    <button id="updateBtn" class="big small" hidden>New version ready: tap to restart</button>
     <h1 class="logo" aria-label="Ultra Parry" style="margin:0"><span class="wa red ultra" data-t="ULTRA">ULTRA</span><span class="wa yellow parry" data-t="PARRY">PARRY</span></h1>
     <p class="tag">Hit the red ball back. Every parry makes it faster and hit harder.</p>
     <div class="label" id="diffLabel">Bot difficulty</div>
@@ -177,6 +186,10 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
       <li>Walls and pillars slow the ball down</li>
       <li class="warn">Ball too slow or rally timer at zero: <b>you both lose</b></li>
     </ul>
+    <div class="menu-foot">
+      <button id="soundBtn" class="ghost" aria-pressed="true">Sound: on</button>
+      <p id="offlineBadge" class="offline" hidden role="status"><i></i><span id="offlineText"></span></p>
+    </div>
   </div>
 
   <div id="over" class="overlay" hidden>
@@ -248,7 +261,7 @@ function initAudio() {
   if (AC) { AC.resume && AC.resume(); return; }
   try {
     AC = new (window.AudioContext || window.webkitAudioContext)();
-    master = AC.createGain(); master.gain.value = 0.55;
+    master = AC.createGain(); master.gain.value = muted ? 0 : 0.55;
     const comp = AC.createDynamicsCompressor();
     master.connect(comp); comp.connect(AC.destination);
     noiseBuf = AC.createBuffer(1, AC.sampleRate * 1.5, AC.sampleRate);
@@ -1249,6 +1262,60 @@ function fireTick(dt) {
   }
 }
 mountFire($('#menu'));
+
+// ---------- quality of life: sound switch, offline status, updates ----------
+let muted = false;
+try { muted = localStorage.getItem('ultraParryMuted') === '1'; } catch (e) {}
+const soundBtn = $('#soundBtn');
+function setBtnText(btn, text) { (btn.querySelector('.btn-label') || btn).textContent = text; }
+function applySound() {
+  setBtnText(soundBtn, muted ? 'Sound: off' : 'Sound: on');
+  soundBtn.setAttribute('aria-pressed', String(!muted));
+  if (master) master.gain.value = muted ? 0 : 0.55;
+}
+soundBtn.addEventListener('click', () => {
+  muted = !muted;
+  try { localStorage.setItem('ultraParryMuted', muted ? '1' : '0'); } catch (e) {}
+  initAudio(); applySound();
+});
+applySound();
+
+// Only the installed app (built by build.py) has offline support; the preview page skips this.
+const badge = $('#offlineBadge');
+function setBadge(state, text) { badge.hidden = false; badge.className = 'offline ' + state; $('#offlineText').textContent = text; }
+async function offlineStatus() {
+  try {
+    const key = (await caches.keys()).find(k => k.startsWith('ultra-parry-'));
+    if (!key) return 'none';
+    const c = await caches.open(key);
+    if (!(await c.match('index.html')) && !(await c.match('./'))) return 'none';
+    return (await c.keys()).some(r => r.url.includes('fonts.gstatic.com')) ? 'full' : 'basic';
+  } catch (e) { return 'none'; }
+}
+async function refreshBadge() {
+  const st = await offlineStatus();
+  if (st === 'none') {
+    setBadge('saving', navigator.onLine ? 'Saving for offline play… keep the app open.' : 'Not saved yet. Open once with internet.');
+    return false;
+  }
+  if (!navigator.onLine) setBadge('off', 'No internet: playing offline.');
+  else if (st === 'full') setBadge('ok', 'Saved for offline. Plays without internet.');
+  else setBadge('ok', 'Saved for offline (titles may use a plain font).');
+  return true;
+}
+if (window.UP_APP && 'serviceWorker' in navigator && 'caches' in window) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let tries = 0;
+  const poll = async () => { if (!(await refreshBadge()) && ++tries < 60) setTimeout(poll, 1000); };
+  poll();
+  addEventListener('online', refreshBadge); addEventListener('offline', refreshBadge);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // a newer version took over while this one was running
+    if (hadController) $('#updateBtn').hidden = false;
+    refreshBadge();
+  });
+}
+$('#updateBtn').addEventListener('click', () => location.reload());
 
 // ---------- end-screen points count-up + coins ----------
 const coinCv = document.createElement('canvas');

@@ -26,6 +26,7 @@ page = f'''<!doctype html>
 <meta name="apple-mobile-web-app-title" content="ULTRA PARRY">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
+<script>window.UP_APP = true;</script>
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 {chr(10).join(head_bits)}
@@ -58,11 +59,22 @@ manifest = {
 }
 
 version = hashlib.sha1(page.encode()).hexdigest()[:10]
+font_css = re.search(r'href="(https://fonts.googleapis.com/css2[^"]+)"', page).group(1).replace('&amp;', '&')
 sw = f'''// Offline support: cache the game, refresh it in the background when online.
 const CACHE = 'ultra-parry-{version}';
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+const FONT_CSS = {json.dumps(font_css)};
 self.addEventListener('install', e => {{
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(async c => {{
+    await c.addAll(CORE);
+    // save the fonts too, so the titles keep their look offline
+    try {{
+      const res = await fetch(FONT_CSS);
+      await c.put(FONT_CSS, res.clone());
+      const urls = [...(await res.text()).matchAll(/url\\((https:[^)]+)\\)/g)].map(m => m[1]);
+      await Promise.all(urls.map(u => fetch(u).then(r => c.put(u, r))));
+    }} catch (err) {{}}
+  }}).then(() => self.skipWaiting()));
 }});
 self.addEventListener('activate', e => {{
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -70,7 +82,7 @@ self.addEventListener('activate', e => {{
 self.addEventListener('fetch', e => {{
   if (e.request.method !== 'GET') return;
   e.respondWith(caches.open(CACHE).then(async cache => {{
-    const hit = await cache.match(e.request, {{ ignoreSearch: true }});
+    const hit = await cache.match(e.request, {{ ignoreVary: true }}) || await cache.match(e.request, {{ ignoreSearch: true, ignoreVary: true }});
     const net = fetch(e.request).then(res => {{
       if (res && (res.ok || res.type === 'opaque')) cache.put(e.request, res.clone());
       return res;

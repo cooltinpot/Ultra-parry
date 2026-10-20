@@ -81,6 +81,19 @@ self.addEventListener('activate', e => {{
 }});
 self.addEventListener('fetch', e => {{
   if (e.request.method !== 'GET') return;
+  if (e.request.mode === 'navigate') {{
+    // opening the app: try for the newest version first, fall back to the saved copy offline
+    e.respondWith(caches.open(CACHE).then(async cache => {{
+      try {{
+        const res = await Promise.race([fetch(e.request), new Promise((_, no) => setTimeout(() => no(new Error('slow')), 3000))]);
+        if (res && res.ok) {{ cache.put('index.html', res.clone()); return res; }}
+        throw new Error('bad response');
+      }} catch (err) {{
+        return (await cache.match('index.html')) || (await cache.match('./')) || Response.error();
+      }}
+    }}));
+    return;
+  }}
   e.respondWith(caches.open(CACHE).then(async cache => {{
     const hit = await cache.match(e.request, {{ ignoreVary: true }}) || await cache.match(e.request, {{ ignoreSearch: true, ignoreVary: true }});
     const net = fetch(e.request).then(res => {{

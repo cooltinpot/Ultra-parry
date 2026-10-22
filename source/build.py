@@ -58,11 +58,11 @@ manifest = {
     ],
 }
 
-version = hashlib.sha1(page.encode()).hexdigest()[:10]
+version = hashlib.sha1(page.encode() + (ROOT / 'vendor' / 'peerjs.min.js').read_bytes()).hexdigest()[:10]
 font_css = re.search(r'href="(https://fonts.googleapis.com/css2[^"]+)"', page).group(1).replace('&amp;', '&')
 sw = f'''// Offline support: cache the game, refresh it in the background when online.
 const CACHE = 'ultra-parry-{version}';
-const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'peerjs.min.js'];
 const FONT_CSS = {json.dumps(font_css)};
 self.addEventListener('install', e => {{
   e.waitUntil(caches.open(CACHE).then(async c => {{
@@ -115,4 +115,6 @@ if DIST.exists():
 for f in (ROOT / 'icons').glob('icon*.png'):
     shutil.copy(f, DIST / 'icons' / f.name)
 shutil.copy(ROOT / 'icons' / 'apple-touch-icon.png', DIST / 'icons' / 'apple-touch-icon.png')
+# online play library (PeerJS), served next to the game so no other site is needed
+shutil.copy(ROOT / 'vendor' / 'peerjs.min.js', DIST / 'peerjs.min.js')
 print('built dist/ version', version)

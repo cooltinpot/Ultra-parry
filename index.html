@@ -440,15 +440,18 @@ function initAudio() {
   } catch (e) { AC = null; }
 }
 let windF = null, windG = null;
-// the Golden Frying Pan's sound effect, loaded from the file next to the page
-let goldBuf = null, goldSrc = null, goldLoading = false;
+// the Golden Frying Pan's sound effects, loaded from the files next to the page:
+// two hit sounds picked at random, and one for a PERFECT
+const GOLD_SOUNDS = { hit1: 'golden-pan-hit1.mp3', hit2: 'golden-pan-hit2.mp3', perfect: 'golden-pan-perfect.mp3' };
+const goldBufs = {};
+let goldSrc = null, goldLoading = false;
 function loadGoldPan() {
-  if (goldBuf || goldLoading || !AC) return;
+  if (goldLoading || !AC || Object.keys(goldBufs).length === 3) return;
   goldLoading = true;
-  fetch('golden-pan.mp3').then(r => r.arrayBuffer())
+  Promise.all(Object.entries(GOLD_SOUNDS).map(([k, url]) => fetch(url).then(r => r.arrayBuffer())
     .then(b => new Promise((ok, no) => AC.decodeAudioData(b, ok, no)))
-    .then(buf => { goldBuf = buf; })
-    .catch(() => {}).finally(() => { goldLoading = false; });
+    .then(buf => { goldBufs[k] = buf; }).catch(() => {})))
+    .finally(() => { goldLoading = false; });
 }
 function updateWind() {
   if (!windG) return;
@@ -511,13 +514,14 @@ const sfx = {
     else if (lab.toLowerCase().includes('squawk')) { tone('sawtooth', 1150, 700, 0.14, 0.12); setTimeout(() => tone('sawtooth', 1050, 650, 0.16, 0.1), 120); }
   },
   catchIt() { tone('square', 220, 160, 0.1, 0.12); noise(0.06, 0.2, 2000, 1); },
-  goldPan() {
+  goldPan(perfect) {
     if (!AC) return;
-    if (!goldBuf) { tone('sine', 660, 650, 1.2, 0.25); tone('sine', 990, 980, 1.0, 0.12); loadGoldPan(); return; }
-    // one CLANG at a time: a new hit restarts it instead of piling up
+    const buf = perfect ? goldBufs.perfect : goldBufs[Math.random() < 0.5 ? 'hit1' : 'hit2'] || goldBufs.hit1;
+    if (!buf) { tone('sine', 660, 650, 1.2, 0.25); tone('sine', 990, 980, 1.0, 0.12); loadGoldPan(); return; }
+    // one golden sound at a time: a new hit cuts off the last one instead of piling up
     try { if (goldSrc) goldSrc.stop(); } catch (e) {}
     const src = AC.createBufferSource(), g = AC.createGain();
-    src.buffer = goldBuf; g.gain.value = 0.6; src.connect(g); g.connect(master); src.start();
+    src.buffer = buf; g.gain.value = 0.6; src.connect(g); g.connect(master); src.start();
     goldSrc = src;
   },
   beep(f) { tone('square', f, f, 0.12, 0.1); },
@@ -1162,7 +1166,7 @@ function fxParry(p, perfect, fast, turbo, x, y, speed, od, lab) {
   if (fast) whiteFlash = 1;
   if (lab) {
     addText(lab, x, y - 62, lab === 'HOME RUN!' || lab === 'MAX ZAP!' || lab === 'MEGA SQUAWK!' || p.arm === 'goldpan' ? '#ffd23f' : '#ffffff', lab === 'HOME RUN!' ? 32 : 24, 0.8);
-    if (p.arm === 'goldpan') { sfx.goldPan(); sparks(x, y, 18, '#ffd84a'); sparks(x, y, 10, '#ffffff'); }
+    if (p.arm === 'goldpan') { sfx.goldPan(perfect); sparks(x, y, 18, '#ffd84a'); sparks(x, y, 10, '#ffffff'); }
     else sfx.armHit(lab);
     if (lab === 'SLASH!') for (let i = 0; i < 3; i++) streaks.push({ x: x + rand(-30, 30), y: y + rand(-30, 30), a: rand(0, 6.28), len: 120, sp: 900, life: 0.25, t: 0 });
     if (lab.includes('ZAP')) sparks(x, y, 16, '#4fd2ff');
@@ -1185,7 +1189,7 @@ function fxParry(p, perfect, fast, turbo, x, y, speed, od, lab) {
   if (turbo) { addText('TURBO!', x, y - 66, '#ffffff', 26, 0.8); rings.push({ x, y, r: 10, max: 120, life: 0.35, t: 0, w: 8 }); }
   sfx.parry(speed);
   if (perfect) {
-    sfx.perfect();
+    if (p.arm !== 'goldpan') sfx.perfect();
     const glints = Array.from({ length: 16 }, () => ({ a: rand(0, 6.28), d: rand(0.35, 1.05), s: rand(5, 11), tw: rand(0, 6.28) }));
     shimmers.push({ p, t: 0, life: 0.8, rot: rand(0, 6.28), glints });
     // freeze frame: white flash, lightning locks onto whoever parried
@@ -1477,7 +1481,7 @@ function buildArmTiles() {
     b.addEventListener('click', () => {
       if (armUnlocked(a)) { prefs.arm = a.id; savePrefs(); P.arm = a.id; }
       previewArm = a.id; refreshCustom(); showArmInfo(a);
-      if (a.id === 'goldpan') { initAudio(); sfx.goldPan(); }
+      if (a.id === 'goldpan') { initAudio(); sfx.goldPan(); }   // a hit sound, as a preview
     });
     $('#armGrid').append(b);
     const main = ctx; ctx = c.getContext('2d');
@@ -1581,7 +1585,7 @@ $('#aiBuy').addEventListener('click', () => {
     if (!a.price || armUnlocked(a) || wallet.coins < a.price) return;
     wallet.coins -= a.price; wallet.owned.push(a.id); saveWallet();
     prefs.arm = a.id; savePrefs(); P.arm = a.id;
-    sfx.register(); if (a.id === 'goldpan') setTimeout(() => sfx.goldPan(), 350);
+    sfx.register(); if (a.id === 'goldpan') setTimeout(() => sfx.goldPan(true), 350);
     refreshCustom(); showArmInfo(a, 'Bought!');
     return;
   }

@@ -214,6 +214,14 @@ body {
   user-select: text; -webkit-user-select: text; touch-action: manipulation;
 }
 #joinCode:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
+.redeem { display: flex; gap: 14px; align-items: center; }
+#redeemCode {
+  font: 17px var(--wa); width: 9.5em; text-align: center; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #000; background: #fff; border: 3px solid #000; border-radius: 0; padding: 8px 10px;
+  transform: skewX(-9deg); box-shadow: -5px 5px 0 #000;
+  user-select: text; -webkit-user-select: text; touch-action: manipulation;
+}
+#redeemCode:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
 .new-best { margin-top: 2px; font-size: 26px; }
 .unlock { margin: 0; font: italic 800 16px var(--body); color: #000; background: var(--grad-yellow); border: 3px solid #000; padding: 6px 12px; transform: skewX(-9deg); box-shadow: -5px 5px 0 #000; }
 .big {
@@ -326,6 +334,10 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
     <canvas id="skinPreview" width="320" height="320" aria-hidden="true"></canvas>
     <p id="skinHint" class="hint"></p>
     <p class="wallet"><i class="coin"></i><b id="coinBal" class="wa gold sm" data-t="0">0</b><span>coins</span></p>
+    <div class="redeem">
+      <input id="redeemCode" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="GOT A CODE?" aria-label="Redeem code">
+      <span class="chips"><button id="redeemBtn">REDEEM</button></span>
+    </div>
     <div class="label">Arms</div>
     <div id="armGrid" class="tiles" role="group" aria-label="Arms"></div>
     <div class="label">Shop</div>
@@ -1579,6 +1591,40 @@ function showInfo(s, note) {
   el.classList.add('again'); el.hidden = false; void el.offsetWidth; el.classList.remove('again');
 }
 $('#aiClose').addEventListener('click', () => { $('#accInfo').hidden = true; });
+
+// ---------- redeem codes ----------
+// Only a hash of each code is stored, so reading the game's files doesn't reveal the codes.
+const CODES = {
+  '762034f5d88acdbce716daad6a9532d4852148db968a6ce360812357e75a4a66': { arm: 'goldpan' },
+};
+function showCard(name, text) {
+  $('#aiName').textContent = name; $('#aiName').dataset.t = name;
+  $('#aiText').textContent = text; $('#aiBuy').hidden = true;
+  const el = $('#accInfo'); el.classList.add('again'); el.hidden = false; void el.offsetWidth; el.classList.remove('again');
+}
+async function redeem(raw) {
+  const norm = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!norm) { showCard('Redeem a code', 'Type a code in the box, then tap REDEEM.'); return; }
+  let hex = '';
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('ultraparry:' + norm));
+    hex = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {}
+  const prize = CODES[hex];
+  if (!prize) { showCard('Hmm…', "That code doesn't work. Check the spelling and try again."); return; }
+  wallet.redeemed = wallet.redeemed || [];
+  if (wallet.redeemed.includes(hex)) { showCard('Already used', 'This code was already redeemed on this phone.'); return; }
+  wallet.redeemed.push(hex);
+  if (prize.arm && !wallet.owned.includes(prize.arm)) wallet.owned.push(prize.arm);
+  saveWallet();
+  prefs.arm = prize.arm; savePrefs(); P.arm = prize.arm; previewArm = prize.arm;
+  initAudio(); sfx.register();
+  if (prize.arm === 'goldpan') setTimeout(() => sfx.goldPan(true), 350);
+  $('#redeemCode').value = '';
+  refreshCustom(); showArmInfo(armById(prize.arm), 'Code redeemed!');
+}
+$('#redeemBtn').addEventListener('click', () => redeem($('#redeemCode').value));
+$('#redeemCode').addEventListener('keydown', e => { if (e.key === 'Enter') redeem($('#redeemCode').value); });
 $('#aiBuy').addEventListener('click', () => {
   if ($('#aiBuy').dataset.kind === 'arm') {
     const a = armById($('#aiBuy').dataset.acc);

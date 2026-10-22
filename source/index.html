@@ -138,6 +138,26 @@ body {
 .tiles .tile canvas { width: 56px; height: 56px; }
 .tiles .tile.locked { border-style: dashed; color: #666; }
 .tiles .tile.locked canvas { opacity: 0.3; filter: grayscale(1); }
+.coin { display: inline-block; width: 0.95em; height: 0.95em; border-radius: 50%; flex: none;
+  background: radial-gradient(circle at 35% 35%, #fff6c2, #ffd84a 45%, #e0a800); border: 2px solid #9a6b00; vertical-align: -0.15em; }
+.wallet { margin: 0; display: flex; align-items: center; gap: 8px; font: italic 800 15px var(--body); color: #000; }
+.wallet .coin { font-size: 24px; }
+#coinBal { font-size: 30px; }
+.tiles .tile .price { display: flex; align-items: center; gap: 3px; font: 11px var(--wa); color: #000; }
+#custom { padding-block-end: calc(200px + env(safe-area-inset-bottom, 0px)); }
+#accInfo {
+  position: fixed; z-index: 6; left: 0; right: 0; margin: 0 auto; width: min(420px, calc(100% - 32px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 16px;
+  background: #fff; border: 3px solid #000; box-shadow: -6px 6px 0 #000;
+  animation: infoUp 0.25s ease-out;
+}
+#accInfo.again { animation: none; }
+@keyframes infoUp { from { transform: translateY(130%); } to { transform: none; } }
+#aiName { font-size: 28px; }
+.ai-row { display: flex; gap: 16px; align-items: center; }
+.coins-earned { margin: 0; display: flex; align-items: center; gap: 8px; font: 22px var(--wa); color: #000; }
+.coins-earned .coin { font-size: 22px; }
 .tiles .tile .lock { font: 10px var(--wa); letter-spacing: 0.04em; color: #b3122b; }
 .big.gold { background: var(--grad-yellow); }
 .panel-title { font-size: clamp(44px, 13vw, 80px); margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.02em; }
@@ -246,6 +266,7 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
       <span id="ptsBreak" class="breakdown"></span>
       <span id="newBest" class="new-best" hidden><span class="wa gold sm" data-t="NEW BEST!">NEW BEST!</span></span>
     </div>
+    <p id="coinsEarned" class="coins-earned" hidden></p>
     <p id="unlockMsg" class="unlock" hidden></p>
     <div id="overCombo" class="over-combo" hidden>
       <span class="label">Best combo</span>
@@ -265,7 +286,9 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
     <h2 class="panel-title"><span class="wa yellow" data-t="CUSTOMIZE">CUSTOMIZE</span></h2>
     <canvas id="skinPreview" width="320" height="320" aria-hidden="true"></canvas>
     <p id="skinHint" class="hint"></p>
-    <div class="label">Accessories</div>
+    <p class="wallet"><i class="coin"></i><b id="coinBal" class="wa gold sm" data-t="0">0</b><span>coins</span></p>
+    <div class="label">Shop</div>
+    <p class="hint">Buy these with coins. You earn coins from the points you score in every match.</p>
     <div id="accGrid" class="tiles" role="group" aria-label="Accessories"></div>
     <div class="label" id="badgeLabel">Badges</div>
     <p class="hint">Earn these by playing. Tap a locked one to see how.</p>
@@ -282,6 +305,14 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
       <button data-pw="off">Off</button>
     </div>
     <button id="customBack" class="big small">DONE</button>
+    <div id="accInfo" class="acc-info" hidden role="dialog" aria-live="polite">
+      <b id="aiName" class="wa yellow sm" data-t=""></b>
+      <p id="aiText" class="hint"></p>
+      <div class="ai-row">
+        <button id="aiBuy" class="big small gold" hidden>BUY</button>
+        <button id="aiClose" class="ghost">Close</button>
+      </div>
+    </div>
   </div>
 
   <div id="scores" class="overlay" hidden>
@@ -781,7 +812,22 @@ const SKINS = [
   } },
 ];
 const skinById = id => SKINS.find(s => s.id === id) || SKINS[0];
-const skinUnlocked = s => !s.unlock || s.unlock(stats);
+// shop accessories cost coins; coins come from points scored in matches
+const PRICES = {
+  cat: 150, bear: 150, flower: 150, clown: 150, mustache: 150, glasses: 150,
+  shades: 300, bunny: 300, bow: 300, beanie: 300, cap: 300, patch: 300, visor: 300, party: 300, scarf: 300, monocle: 300,
+  horns: 600, halo: 600, tophat: 600, headphones: 600, antennae: 600, mohawk: 600, propeller: 1000,
+};
+SKINS.forEach(s => { if (PRICES[s.id]) s.price = PRICES[s.id]; });
+const COINS_PER_POINT = 0.1;   // a 3000-point match earns 300 coins
+const MIN_COINS = 25;          // every finished match pays at least this
+const wallet = { coins: 300, owned: [] };
+let walletSaved = null;
+try { walletSaved = localStorage.getItem('ultraParryWallet'); } catch (e) {}
+if (walletSaved) { try { Object.assign(wallet, JSON.parse(walletSaved)); } catch (e) {} }
+else if (stats.games > 0) wallet.owned = ['shades', 'cat'];   // these were free before the shop opened
+function saveWallet() { try { localStorage.setItem('ultraParryWallet', JSON.stringify(wallet)); } catch (e) {} }
+const skinUnlocked = s => s.badge ? s.unlock(stats) : s.price ? wallet.owned.includes(s.id) : true;
 const BADGES = SKINS.filter(s => s.badge);
 if (!skinUnlocked(skinById(prefs.skin))) prefs.skin = 'classic';
 setArena(prefs.arena);
@@ -1015,6 +1061,10 @@ function showOver() {
   saveStats();
   const unlocked = SKINS.filter(s => skinUnlocked(s) && !had.has(s.id));
   $('#newBest').hidden = !newBest;
+  const earned = Math.max(MIN_COINS, Math.round(final * COINS_PER_POINT));
+  wallet.coins += earned; saveWallet();
+  $('#coinsEarned').innerHTML = `<i class="coin"></i>+${earned} coins`;
+  $('#coinsEarned').hidden = true;   // revealed when the points finish counting
   $('#unlockMsg').hidden = !unlocked.length;
   $('#unlockMsg').textContent = (unlocked.length > 1 ? 'New badges: ' : 'New badge: ') + unlocked.map(s => s.name).join(', ') + '!';
 
@@ -1168,7 +1218,7 @@ $('#again').addEventListener('click', () => {
 });
 $('#toMenu').addEventListener('click', () => { if (NET.role) leaveOnline(''); toMenu(); });
 $('#onlineBtn').addEventListener('click', () => { $('#lobbyMsg').textContent = ''; $('#hostBox').hidden = true; showPanel('lobby'); });
-$('#customBtn').addEventListener('click', () => { refreshCustom(); showPanel('custom'); });
+$('#customBtn').addEventListener('click', () => { $('#accInfo').hidden = true; refreshCustom(); showPanel('custom'); });
 $('#scoresBtn').addEventListener('click', () => { refreshScores(); showPanel('scores'); });
 $('#customBack').addEventListener('click', toMenu);
 $('#scoresBack').addEventListener('click', () => showPanel('menu'));
@@ -1183,9 +1233,10 @@ function buildTiles() {
     const name = document.createElement('span'); name.textContent = s.name;
     b.append(c, name);
     if (s.badge) { const l = document.createElement('span'); l.className = 'lock'; l.textContent = 'LOCKED'; b.append(l); }
+    if (s.price) { const l = document.createElement('span'); l.className = 'price'; l.innerHTML = `<i class="coin"></i>${s.price}`; b.append(l); }
     b.addEventListener('click', () => {
       if (skinUnlocked(s)) { prefs.skin = s.id; savePrefs(); P.skin = s.id; }
-      refreshCustom(s);
+      refreshCustom(s); showInfo(s);
     });
     (s.badge ? $('#badgeGrid') : $('#accGrid')).append(b);
     const main = ctx; ctx = c.getContext('2d');
@@ -1208,19 +1259,46 @@ function refreshCustom(tapped) {
     const s = skinById(b.dataset.acc), open = skinUnlocked(s);
     b.classList.toggle('locked', !open);
     b.setAttribute('aria-pressed', String(prefs.skin === s.id));
-    const l = b.querySelector('.lock'); if (l) l.hidden = open;
+    const l = b.querySelector('.lock, .price'); if (l) l.hidden = open;
   }
+  $('#coinBal').textContent = wallet.coins; $('#coinBal').dataset.t = wallet.coins;
   $('#badgeLabel').textContent = `Badges · ${BADGES.filter(skinUnlocked).length} of ${BADGES.length} earned`;
   const s = tapped || skinById(prefs.skin);
   previewSkin = s.id;
-  $('#skinHint').textContent = skinUnlocked(s) ? `Wearing: ${skinById(prefs.skin).name}` : `${s.name} is locked. To earn it: ${s.how}.`;
+  $('#skinHint').textContent = skinUnlocked(s) ? `Wearing: ${skinById(prefs.skin).name}` : s.badge ? `${s.name} is locked. To earn it: ${s.how}.` : `${s.name} costs ${s.price} coins.`;
   for (const b of document.querySelectorAll('[data-arena]')) b.setAttribute('aria-pressed', String(prefs.arena === b.dataset.arena));
   for (const b of document.querySelectorAll('[data-pw]')) b.setAttribute('aria-pressed', String(prefs.powerups === (b.dataset.pw === 'on')));
 }
+// the card at the bottom of Customize: what an accessory is, how to get it, and BUY
+function showInfo(s, note) {
+  const el = $('#accInfo'), name = $('#aiName'), buy = $('#aiBuy');
+  name.textContent = s.name; name.dataset.t = s.name;
+  buy.hidden = true;
+  let text;
+  if (skinUnlocked(s)) text = s.id === 'classic' ? 'No accessory. Your character is wearing nothing.' : "You're wearing it." + (s.badge ? ` Badge earned by: ${s.how}.` : '');
+  else if (s.badge) text = `Badge. To earn it: ${s.how}.`;
+  else {
+    const need = s.price - wallet.coins;
+    if (need > 0) text = `Costs ${s.price} coins. You need ${need} more. Every match earns coins from your points.`;
+    else { text = `Costs ${s.price} coins. You have ${wallet.coins}.`; buy.hidden = false; buy.dataset.acc = s.id; setBtnText(buy, `BUY FOR ${s.price}`); }
+  }
+  $('#aiText').textContent = (note ? note + ' ' : '') + text;
+  el.classList.add('again'); el.hidden = false; void el.offsetWidth; el.classList.remove('again');
+}
+$('#aiClose').addEventListener('click', () => { $('#accInfo').hidden = true; });
+$('#aiBuy').addEventListener('click', () => {
+  const s = skinById($('#aiBuy').dataset.acc);
+  if (!s.price || wallet.owned.includes(s.id) || wallet.coins < s.price) return;
+  wallet.coins -= s.price; wallet.owned.push(s.id); saveWallet();
+  prefs.skin = s.id; savePrefs(); P.skin = s.id;
+  sfx.register();
+  refreshCustom(s); showInfo(s, 'Bought!');
+});
 function refreshScores() {
   const rows = [['Best points', stats.bestPoints], ['Best rally', stats.bestRally], ['Best combo', stats.bestCombo > 1 ? '×' + stats.bestCombo : '-'],
     ['Top speed', stats.topSpeed], ['Wins', stats.wins], ['Hard bot wins', stats.hardWins], ['Online wins', stats.onlineWins], ['Games played', stats.games],
-    ['Badges', `${BADGES.filter(skinUnlocked).length}/${BADGES.length}`], ['Perfect parries', stats.perfectsTotal]];
+    ['Badges', `${BADGES.filter(skinUnlocked).length}/${BADGES.length}`], ['Perfect parries', stats.perfectsTotal],
+    ['Coins', wallet.coins], ['Shop items', `${wallet.owned.length}/${Object.keys(PRICES).length}`]];
   $('#scoreGrid').innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b class="wa ink sm" data-t="${v}">${v}</b></div>`).join('');
 }
 
@@ -2301,6 +2379,7 @@ function coinTick(dt) {
     } else if (f >= 1) {
       count.active = false;
       sfx.register();
+      $('#coinsEarned').hidden = false;
       const all = setDigits(String(count.target), true);
       for (const sp of all) { sp.classList.remove('pop'); void sp.offsetWidth; sp.classList.add('pop'); if (!calm.matches) spawnCoins(sp, 7, true); }
     }

@@ -1,5 +1,5 @@
 // Offline support: cache the game, refresh it in the background when online.
-const CACHE = 'ultra-parry-e0f7c0f888';
+const CACHE = 'ultra-parry-83a037f6e1';
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'peerjs.min.js'];
 const FONT_CSS = "https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:ital,wght@0,500;0,800;1,800&family=Bungee&family=Chakra+Petch:wght@500;700&display=swap";
 self.addEventListener('install', e => {

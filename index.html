@@ -436,9 +436,20 @@ function initAudio() {
     windF = AC.createBiquadFilter(); windF.type = 'bandpass'; windF.Q.value = 0.9; windF.frequency.value = 300;
     windG = AC.createGain(); windG.gain.value = 0;
     src.connect(windF); windF.connect(windG); windG.connect(master); src.start();
+    loadGoldPan();
   } catch (e) { AC = null; }
 }
 let windF = null, windG = null;
+// the Golden Frying Pan's sound effect, loaded from the file next to the page
+let goldBuf = null, goldSrc = null, goldLoading = false;
+function loadGoldPan() {
+  if (goldBuf || goldLoading || !AC) return;
+  goldLoading = true;
+  fetch('golden-pan.mp3').then(r => r.arrayBuffer())
+    .then(b => new Promise((ok, no) => AC.decodeAudioData(b, ok, no)))
+    .then(buf => { goldBuf = buf; })
+    .catch(() => {}).finally(() => { goldLoading = false; });
+}
 function updateWind() {
   if (!windG) return;
   const k = mode === 'play' && freezeT <= 0 ? speedK() : 0;
@@ -500,6 +511,15 @@ const sfx = {
     else if (lab.toLowerCase().includes('squawk')) { tone('sawtooth', 1150, 700, 0.14, 0.12); setTimeout(() => tone('sawtooth', 1050, 650, 0.16, 0.1), 120); }
   },
   catchIt() { tone('square', 220, 160, 0.1, 0.12); noise(0.06, 0.2, 2000, 1); },
+  goldPan() {
+    if (!AC) return;
+    if (!goldBuf) { tone('sine', 660, 650, 1.2, 0.25); tone('sine', 990, 980, 1.0, 0.12); loadGoldPan(); return; }
+    // one CLANG at a time: a new hit restarts it instead of piling up
+    try { if (goldSrc) goldSrc.stop(); } catch (e) {}
+    const src = AC.createBufferSource(), g = AC.createGain();
+    src.buffer = goldBuf; g.gain.value = 0.6; src.connect(g); g.connect(master); src.start();
+    goldSrc = src;
+  },
   beep(f) { tone('square', f, f, 0.12, 0.1); },
   boom() { noise(1.0, 0.9, 1400, 0.4, 'lowpass'); tone('sine', 150, 32, 0.7, 0.9); noise(0.3, 0.3, 5000, 0.6); },
   scream(pitch) {
@@ -901,6 +921,8 @@ const ARMS = [
     desc: 'The Metal Hand in gold. Same rules, more shine.' },
   { id: 'pan', name: 'Frying Pan', price: 400, reach: 1.1, window: 1.6, gain: 0.85, arc: 1.6,
     desc: 'Huge timing window, so it is easy to hit with. Each hit adds 15% less speed, so rallies build slowly. BONG!' },
+  { id: 'goldpan', name: 'Golden Frying Pan', skinOf: 'pan', price: 30000, reach: 1.1, window: 1.6, gain: 0.85, arc: 1.6,
+    desc: 'The Frying Pan in solid, shimmering gold, with its own legendary CLANG. Same rules as the Frying Pan.' },
   { id: 'bat', name: 'Baseball Bat', price: 600, reach: 1.25, cool: 1.6,
     desc: 'Long reach (+25%). A PERFECT is a HOME RUN with 50% more speed. A missed swing leaves you waiting longer.' },
   { id: 'racket', name: 'Tennis Racket', price: 700, reach: 1.1,
@@ -1106,7 +1128,7 @@ function hitBack(p, perfect, aimAngle) {
     let g = A.gain || 1;
     if (A.id === 'bat') { if (perfect) { g *= 1.5; lab = 'HOME RUN!'; } else lab = 'CRACK!'; }
     else if (A.id === 'glove') lab = 'POW!';
-    else if (A.id === 'pan') lab = 'BONG!';
+    else if ((A.skinOf || A.id) === 'pan') lab = 'BONG!';
     else if (A.id === 'katana') lab = 'SLASH!';
     else if (A.id === 'racket') { lab = 'SPIN!'; curve = rand(1.2, 2.2) * (Math.random() < 0.5 ? -1 : 1); }
     else if (A.id === 'magnet') lab = 'THROW!';
@@ -1139,8 +1161,9 @@ function fxCatch(p) { addText('CATCH!', p.x, p.y - 44, '#ffffff', 22, 0.6); sfx.
 function fxParry(p, perfect, fast, turbo, x, y, speed, od, lab) {
   if (fast) whiteFlash = 1;
   if (lab) {
-    addText(lab, x, y - 62, lab === 'HOME RUN!' || lab === 'MAX ZAP!' || lab === 'MEGA SQUAWK!' ? '#ffd23f' : '#ffffff', lab === 'HOME RUN!' ? 32 : 24, 0.8);
-    sfx.armHit(lab);
+    addText(lab, x, y - 62, lab === 'HOME RUN!' || lab === 'MAX ZAP!' || lab === 'MEGA SQUAWK!' || p.arm === 'goldpan' ? '#ffd23f' : '#ffffff', lab === 'HOME RUN!' ? 32 : 24, 0.8);
+    if (p.arm === 'goldpan') { sfx.goldPan(); sparks(x, y, 18, '#ffd84a'); sparks(x, y, 10, '#ffffff'); }
+    else sfx.armHit(lab);
     if (lab === 'SLASH!') for (let i = 0; i < 3; i++) streaks.push({ x: x + rand(-30, 30), y: y + rand(-30, 30), a: rand(0, 6.28), len: 120, sp: 900, life: 0.25, t: 0 });
     if (lab.includes('ZAP')) sparks(x, y, 16, '#4fd2ff');
   }
@@ -1454,6 +1477,7 @@ function buildArmTiles() {
     b.addEventListener('click', () => {
       if (armUnlocked(a)) { prefs.arm = a.id; savePrefs(); P.arm = a.id; }
       previewArm = a.id; refreshCustom(); showArmInfo(a);
+      if (a.id === 'goldpan') { initAudio(); sfx.goldPan(); }
     });
     $('#armGrid').append(b);
     const main = ctx; ctx = c.getContext('2d');
@@ -1557,7 +1581,8 @@ $('#aiBuy').addEventListener('click', () => {
     if (!a.price || armUnlocked(a) || wallet.coins < a.price) return;
     wallet.coins -= a.price; wallet.owned.push(a.id); saveWallet();
     prefs.arm = a.id; savePrefs(); P.arm = a.id;
-    sfx.register(); refreshCustom(); showArmInfo(a, 'Bought!');
+    sfx.register(); if (a.id === 'goldpan') setTimeout(() => sfx.goldPan(), 350);
+    refreshCustom(); showArmInfo(a, 'Bought!');
     return;
   }
   const s = skinById($('#aiBuy').dataset.acc);
@@ -1820,6 +1845,7 @@ function updatePlayer(p, dt) {
     if (Math.random() < dt * 30 * (0.3 + p.charge)) sparks(p.x + Math.cos(p.face + 1) * (PR + 7), p.y + Math.sin(p.face + 1) * (PR + 7), 1, '#4fd2ff');
   }
   if (p.boom) { if (NET.role !== 'guest') updateBoom(p, dt); else p.boom.spin += dt * 25; }
+  if (p.arm === 'goldpan' && Math.random() < dt * 6) parts.push({ x: p.x + Math.cos(p.face + 0.6) * (PR + 34) + rand(-8, 8), y: p.y + Math.sin(p.face + 0.6) * (PR + 34) + rand(-8, 8), vx: rand(-15, 15), vy: rand(-40, -10), life: rand(0.3, 0.6), t: 0, c: Math.random() < 0.5 ? '#ffffff' : '#ffd84a' });
 }
 function updateMetal(p, dt) {
   // energy is tracked by whichever phone moves this character
@@ -2156,6 +2182,24 @@ function drawArmItem(p, hx, hy, ha) {
     dot('rgba(255,255,255,0.45)', ...out(6), 3.5);
   } else if (id === 'pan') {
     line('#2a2a2a', 5, hx, hy, ...out(16)); dot('#1e1e1e', ...out(28), 13); ring('#5a5a5a', ...out(28), 13, 2); ring('#333', ...out(28), 8, 1.2); grip();
+  } else if (id === 'goldpan') {
+    const [px, py] = out(28), t = performance.now() / 1000;
+    line('#9a6b00', 5, hx, hy, ...out(16));
+    ctx.shadowColor = '#ffd84a'; ctx.shadowBlur = 12;
+    const g = ctx.createRadialGradient(px - 4, py - 4, 2, px, py, 13);
+    g.addColorStop(0, '#fff6c8'); g.addColorStop(0.45, '#ffd84a'); g.addColorStop(1, '#b8860b');
+    ctx.fillStyle = g; circle(px, py, 13); ctx.fill(); ctx.shadowBlur = 0;
+    ring('#8a6100', px, py, 13, 2); ring('rgba(255,246,200,0.8)', px, py, 8.5, 1.2);
+    // a shine band sweeping across the gold
+    ctx.save(); circle(px, py, 12); ctx.clip();
+    ctx.translate(px - 20 + (t * 30) % 40, py); ctx.rotate(0.6); ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(-3, -20, 6, 40);
+    ctx.restore();
+    // white glimmers popping on and off
+    for (let i = 0; i < 3; i++) {
+      const k = Math.sin(t * 5 + i * 2.1);
+      if (k > 0.2) poly(starPts(px + Math.cos(i * 2.2 + 0.5) * 8, py + Math.sin(i * 2.2 + 0.5) * 8, 2.5 + 4 * k, 0.8 + k, 4, 0), '#ffffff');
+    }
+    grip();
   } else if (id === 'racket') {
     line('#333', 4, hx, hy, ...out(15));
     const [rx, ry] = out(28);

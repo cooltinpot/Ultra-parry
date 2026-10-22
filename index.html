@@ -326,6 +326,8 @@ button:focus-visible { outline: 3px solid var(--red); outline-offset: 4px; }
     <canvas id="skinPreview" width="320" height="320" aria-hidden="true"></canvas>
     <p id="skinHint" class="hint"></p>
     <p class="wallet"><i class="coin"></i><b id="coinBal" class="wa gold sm" data-t="0">0</b><span>coins</span></p>
+    <div class="label">Arms</div>
+    <div id="armGrid" class="tiles" role="group" aria-label="Arms"></div>
     <div class="label">Shop</div>
     <p class="hint">Buy these with coins. You earn coins from the points you score in every match.</p>
     <div id="accGrid" class="tiles" role="group" aria-label="Accessories"></div>
@@ -410,7 +412,7 @@ const DIFF = {
   normal: { base: 1.0,  fall: 2300, move: 0.85 },
   hard:   { base: 1.06, fall: 3400, move: 1.0 },
 };
-const SPEED_TIERS = [[600, 'FAST!'], [900, 'BLAZING!'], [1200, 'HYPERSONIC!'], [1450, 'MAX SPEED!!']];
+const SPEED_TIERS = [[600, 'FAST!'], [900, 'BLAZING!'], [1200, 'HYPERSONIC!'], [1450, 'MAX SPEED!!'], [1800, 'ULTRA!']];
 const CONFETTI = ['#ff3b6b', '#ffd23f', '#3bceac', '#4d8bff', '#b46bff', '#ff8c3b', '#ffffff'];
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -484,6 +486,9 @@ const sfx = {
   tier(i) { [0, 4, 7, 12].slice(0, 2 + Math.min(i, 2)).forEach((st, j) => setTimeout(() => tone('square', 523 * Math.pow(2, (st + i * 2) / 12), 523 * Math.pow(2, (st + i * 2) / 12), 0.1, 0.07), j * 60)); },
   block() { tone('square', 620, 300, 0.12, 0.12); noise(0.1, 0.22, 3000, 1); },
   pickup() { [880, 1320, 1760].forEach((f, i) => setTimeout(() => tone('triangle', f, f, 0.12, 0.08), i * 55)); },
+  overdrive() { noise(0.25, 0.6, 900, 0.6, 'lowpass'); tone('square', 180, 1800, 0.35, 0.16); tone('sine', 90, 40, 0.6, 0.6); setTimeout(() => noise(0.9, 0.18, 4000, 0.8, 'highpass'), 250); },
+  charged() { tone('sine', 1568, 1568, 0.08, 0.07); setTimeout(() => tone('sine', 2093, 2093, 0.14, 0.07), 70); },
+  cooled() { noise(0.4, 0.12, 5000, 1, 'highpass'); tone('triangle', 660, 990, 0.15, 0.06); },
   beep(f) { tone('square', f, f, 0.12, 0.1); },
   boom() { noise(1.0, 0.9, 1400, 0.4, 'lowpass'); tone('sine', 150, 32, 0.7, 0.9); noise(0.3, 0.3, 5000, 0.6); },
   scream(pitch) {
@@ -529,10 +534,11 @@ const POWERS = ['heal', 'shield', 'reach', 'turbo'];
 const POWER_LABEL = { heal: '+20 HP', shield: 'SHIELD', reach: 'BIG HAND', turbo: 'TURBO' };
 const REACH_BOOST = 1.45, REACH_TIME = 8;    // Big Hand: parry reach ×1.45 for 8 s
 const TURBO_BOOST = 1.25;                    // Turbo: next parry hits 25% faster
-const reachOf = p => REACH * (p.reachT > 0 ? REACH_BOOST : 1);
+// the Metal Hand's hitbox shrinks as it charges: 1.4× when empty, 0.85× when full
+const reachOf = p => REACH * (p.reachT > 0 ? REACH_BOOST : 1) * (isMetal(p) ? 1.4 - 0.55 * p.energy / 100 : 1);
 
 // saved on this phone: chosen skin/arena and lifetime records
-const prefs = { skin: 'classic', arena: 'classic', powerups: true };
+const prefs = { skin: 'classic', arm: 'hand', arena: 'classic', powerups: true };
 const stats = { games: 0, wins: 0, easyWins: 0, normalWins: 0, hardWins: 0, onlineWins: 0, flawlessWins: 0, bothLoses: 0,
   perfectsTotal: 0, pickupsTotal: 0, blocksTotal: 0, bestPoints: 0, bestRally: 0, bestCombo: 0, topSpeed: 0 };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem('ultraParryPrefs') || '{}')); } catch (e) {}
@@ -869,11 +875,28 @@ function saveWallet() { try { localStorage.setItem('ultraParryWallet', JSON.stri
 const skinUnlocked = s => s.badge ? s.unlock(stats) : s.price ? wallet.owned.includes(s.id) : true;
 const BADGES = SKINS.filter(s => s.badge);
 if (!skinUnlocked(skinById(prefs.skin))) prefs.skin = 'classic';
+
+// ---------- arms ----------
+// Metal Hand: moving drains energy (bigger hitbox, weaker hits), standing still charges it
+// (smaller hitbox, stronger hits). A PERFECT at full charge fires OVERDRIVE past max speed,
+// then the hand overheats and its owner moves 70% slower for 6 seconds.
+const ARMS = [
+  { id: 'hand', name: 'Hand' },
+  { id: 'metal', name: 'Metal Hand', price: 1900, how: 'Land 10 PERFECT parries', unlock: s => s.perfectsTotal >= 10 },
+  { id: 'metalgold', name: 'Gilded Metal Hand', skinOf: 'metal', how: 'Land 10 PERFECT parries', unlock: s => s.perfectsTotal >= 10 },
+];
+const armById = id => ARMS.find(a => a.id === id) || ARMS[0];
+const armUnlocked = a => a.id === 'hand' || a.unlock(stats) || (!!a.price && wallet.owned.includes(a.id));
+const isMetal = p => p.arm === 'metal' || p.arm === 'metalgold';
+const ENERGY_DRAIN = 35, ENERGY_CHARGE = 25;    // per second at full speed / standing still
+const OVERHEAT_TIME = 6, OVERHEAT_SLOW = 0.3;   // overheated: move at 30% speed
+const ULTRA_MAX = 2100;                         // OVERDRIVE may go past MAX_SPEED up to this
+if (!armUnlocked(armById(prefs.arm))) prefs.arm = 'hand';
 setArena(prefs.arena);
 
 // ---------- online (peer to peer, host runs the match) ----------
 const NET = { role: null, peer: null, conn: null, rtt: 0.1, snapAt: 0, sendAcc: 0, pingAcc: 0,
-  remoteSkin: 'classic', arena: 'classic', powerups: true, friendReady: false, gotFirst: false };
+  remoteSkin: 'classic', remoteArm: 'hand', arena: 'classic', powerups: true, friendReady: false, gotFirst: false };
 const send = msg => { try { if (NET.conn && NET.conn.open) NET.conn.send(msg); } catch (e) {} };
 // on the host, P is "h" and B is "g"; on the guest the same letters map the other way round
 const who = p => (p === P) === (NET.role !== 'guest') ? 'h' : 'g';
@@ -907,6 +930,7 @@ function mkPlayer(isBot) {
     face: isBot ? Math.PI / 2 : -Math.PI / 2, swingT: 0, swingAge: 9, cool: 0, flash: 0,
     dying: false, dieT: 0, exploded: false, skin: isBot ? 'classic' : prefs.skin,
     shield: false, reachT: 0, turbo: false, netX: W / 2, netY: H * 0.2, netFace: Math.PI / 2,
+    arm: isBot ? 'hand' : prefs.arm, energy: 50, heatT: 0, eShown: 50, eVis: 0, fullPing: false,
     stats: { parries: 0, perfects: 0, speedPts: 0, dealt: 0, combo: 0, bestCombo: 0, pickups: 0, blocks: 0, hitsTaken: 0 },
     body: isBot ? '#767676' : '#e4e4e4', edge: isBot ? '#c4c4c4' : '#ffffff', pitch: isBot ? 290 : 430,
   };
@@ -916,7 +940,7 @@ const foeName = () => NET.role ? 'FRIEND' : 'BOT';
 
 function resetWorld() {
   P = mkPlayer(false); B = mkPlayer(true);
-  if (NET.role) { B.isBot = false; B.remote = true; B.skin = NET.remoteSkin; }
+  if (NET.role) { B.isBot = false; B.remote = true; B.skin = NET.remoteSkin; B.arm = NET.remoteArm; }
   ball = { x: W / 2, y: H / 2, vx: 190, vy: 260, speed: 320, homing: 0, target: null, trail: [], alive: true, pend: 0, sx: 0, sy: 0, svx: 0, svy: 0 };
 }
 resetWorld();
@@ -933,7 +957,7 @@ function startMatch() {
   combo = 0; bestCombo = 0; $('#combo').hidden = true; streaks.length = 0;
   NET.friendReady = false; NET.gotFirst = false;
   hideOverlays(); $('#parryBtn').hidden = false;
-  if (NET.role === 'host') send({ t: 'start', arena: arenaId, pw: powerupsOn, skin: P.skin });
+  if (NET.role === 'host') send({ t: 'start', arena: arenaId, pw: powerupsOn, skin: P.skin, arm: P.arm });
 }
 function beginServe(s) {
   mode = 'serve'; server = s;
@@ -966,9 +990,15 @@ function parry(p, d) {
   const o = other(p);
   const perfect = d < PR + BR + 16, fast = ball.speed >= FAST_FLASH, turbo = p.turbo;
   const a = Math.atan2(o.y - ball.y, o.x - ball.x) + rand(-0.85, 0.85);
-  let sp = perfect ? ball.speed * 1.2 + 100 : ball.speed * 1.1 + 40;
+  const metal = isMetal(p), e = metal ? p.energy / 100 : 0;
+  const overdrive = metal && perfect && p.energy >= 99 && p.heatT <= 0;
+  let sp;
+  if (overdrive) sp = Math.max(ball.speed * 1.6, 1950);
+  else if (metal) sp = perfect ? ball.speed * (1.1 + 0.2 * e) + 50 + 100 * e : ball.speed * (1.02 + 0.18 * e) + 10 + 60 * e;
+  else sp = perfect ? ball.speed * 1.2 + 100 : ball.speed * 1.1 + 40;
   if (turbo) { sp *= TURBO_BOOST; p.turbo = false; }
-  ball.speed = Math.min(MAX_SPEED, sp);
+  ball.speed = Math.min(overdrive ? ULTRA_MAX : MAX_SPEED, sp);
+  if (overdrive) { p.heatT = OVERHEAT_TIME; p.energy = 0; }
   // sometimes the ball takes a lazy, wandering path that bleeds speed off walls
   ball.homing = Math.random() < 0.3 ? rand(0.6, 1.1) : rand(1.7, 3.2);
   ball.vx = Math.cos(a) * ball.speed; ball.vy = Math.sin(a) * ball.speed;
@@ -978,16 +1008,24 @@ function parry(p, d) {
   st.parries++; st.speedPts += Math.round(ball.speed / 10);
   if (perfect) { st.perfects++; st.combo++; st.bestCombo = Math.max(st.bestCombo, st.combo); } else st.combo = 0;
   p.swingT = 0; p.cool = 0.08;
-  fxParry(p, perfect, fast, turbo, ball.x, ball.y, ball.speed);
-  emit('parry', { w: who(p), pf: perfect ? 1 : 0, f: fast ? 1 : 0, tb: turbo ? 1 : 0, x: ball.x, y: ball.y, sp: ball.speed });
+  fxParry(p, perfect, fast, turbo, ball.x, ball.y, ball.speed, overdrive);
+  emit('parry', { w: who(p), pf: perfect ? 1 : 0, f: fast ? 1 : 0, tb: turbo ? 1 : 0, od: overdrive ? 1 : 0, x: ball.x, y: ball.y, sp: ball.speed });
   if (!NET.role) { if (o === B) botPlan(); else bot.plan = false; }
 }
-function fxParry(p, perfect, fast, turbo, x, y, speed) {
+function fxParry(p, perfect, fast, turbo, x, y, speed, od) {
   if (fast) whiteFlash = 1;
+  if (od) {
+    addText('OVERDRIVE!', x, y - 72, '#ffffff', 36, 1.1);
+    addText('OVERHEAT', p.x, p.y + 52, '#ff8a3b', 20, 1.4);
+    rings.push({ x, y, r: 10, max: 220, life: 0.5, t: 0, w: 12 });
+    sparks(x, y, 30, '#4fd2ff');
+    p.heatT = OVERHEAT_TIME; p.energy = 0;
+    sfx.overdrive();
+  }
   rallyPopAt = performance.now() / 1000;
   if (p === P) { if (perfect) comboUp(); else comboBreak(); }
-  hitstop = 0.04 + (speed / MAX_SPEED) * 0.07;
-  shake = Math.min(18, 4 + speed / 90);
+  hitstop = 0.04 + (Math.min(speed, MAX_SPEED) / MAX_SPEED) * 0.07;
+  shake = od ? 26 : Math.min(18, 4 + speed / 90);
   sparks(x, y, 14, '#ffffff'); sparks(x, y, 6, '#ff2a2a');
   rings.push({ x, y, r: 10, max: 70, life: 0.3, t: 0, w: 4 });
   addText(perfect ? 'PERFECT!' : 'PARRY!', x, y - 34, perfect ? '#ffffff' : '#cfcfcf', perfect ? 30 : 22, 0.7);
@@ -1083,7 +1121,7 @@ function showOver() {
   $('#ptsBreak').textContent = `${st.parries} parries · ${st.perfects} perfect · ${st.dealt} damage dealt` + (winBonus ? ' · win bonus 1000' : '');
 
   // lifetime records and badges
-  const had = new Set(SKINS.filter(skinUnlocked).map(s => s.id));
+  const had = new Set(SKINS.filter(skinUnlocked).map(s => s.id).concat(ARMS.filter(armUnlocked).map(a => a.id)));
   const newBest = final > stats.bestPoints;
   stats.games++;
   if (result === 'win') {
@@ -1098,14 +1136,14 @@ function showOver() {
   stats.bestCombo = Math.max(stats.bestCombo, st.bestCombo);
   stats.topSpeed = Math.max(stats.topSpeed, Math.round(topSpeed));
   saveStats();
-  const unlocked = SKINS.filter(s => skinUnlocked(s) && !had.has(s.id));
+  const unlocked = SKINS.filter(s => skinUnlocked(s) && !had.has(s.id)).concat(ARMS.filter(a => armUnlocked(a) && !had.has(a.id)));
   $('#newBest').hidden = !newBest;
   const earned = Math.max(MIN_COINS, Math.round(final * COINS_PER_POINT));
   wallet.coins += earned; saveWallet();
   $('#coinsEarned').innerHTML = `<i class="coin"></i>+${earned} coins`;
   $('#coinsEarned').hidden = true;   // revealed when the points finish counting
   $('#unlockMsg').hidden = !unlocked.length;
-  $('#unlockMsg').textContent = (unlocked.length > 1 ? 'New badges: ' : 'New badge: ') + unlocked.map(s => s.name).join(', ') + '!';
+  $('#unlockMsg').textContent = (unlocked.length > 1 ? 'Unlocked: ' : 'Unlocked: ') + unlocked.map(s => s.name).join(', ') + '!';
 
   setBtnText($('#again'), 'REMATCH');
   setBtnText($('#toMenu'), NET.role ? 'Leave' : 'Change difficulty');
@@ -1264,6 +1302,46 @@ $('#scoresBack').addEventListener('click', () => showPanel('menu'));
 $('#lobbyBack').addEventListener('click', () => { leaveOnline(''); showPanel('menu'); });
 
 // one picture tile per accessory, drawn once with the accessory on a character facing up
+function buildArmTiles() {
+  for (const a of ARMS) {
+    const b = document.createElement('button');
+    b.className = 'tile'; b.dataset.arm = a.id;
+    const c = document.createElement('canvas'); c.width = 112; c.height = 112;
+    const name = document.createElement('span'); name.textContent = a.name;
+    b.append(c, name);
+    const l = document.createElement('span');
+    if (a.price) { l.className = 'price'; l.innerHTML = `<i class="coin"></i>${a.price}`; }
+    else if (a.unlock) { l.className = 'lock'; l.textContent = 'LOCKED'; }
+    if (a.unlock) b.append(l);
+    b.addEventListener('click', () => {
+      if (armUnlocked(a)) { prefs.arm = a.id; savePrefs(); P.arm = a.id; }
+      previewArm = a.id; refreshCustom(); showArmInfo(a);
+    });
+    $('#armGrid').append(b);
+    const main = ctx; ctx = c.getContext('2d');
+    ctx.fillStyle = '#272727'; ctx.fillRect(0, 0, 112, 112);
+    ctx.setTransform(2.1, 0, 0, 2.1, 46, 62);
+    const fake = mkPlayer(false); fake.x = 0; fake.y = 0; fake.skin = 'classic'; fake.arm = a.id; fake.energy = 100; fake.swingAge = 9;
+    drawPlayer(fake, 0);
+    ctx = main;
+  }
+}
+function showArmInfo(a, note) {
+  const el = $('#accInfo'), buy = $('#aiBuy'), n = Math.min(10, stats.perfectsTotal);
+  $('#aiName').textContent = a.name; $('#aiName').dataset.t = a.name;
+  buy.hidden = true;
+  let text;
+  if (armUnlocked(a)) {
+    text = a.id === 'hand' ? 'Equipped. The classic hand.'
+      : 'Equipped. Stand still to charge (smaller hitbox, harder hits). Moving drains it (bigger hitbox, weaker hits). A PERFECT at full charge fires OVERDRIVE, then you overheat and move 70% slower for 6 seconds.';
+  } else if (a.price) {
+    text = `Costs ${a.price} coins, or get it free (plus the Gilded skin) by landing 10 PERFECT parries. You have ${n}/10.`;
+    if (wallet.coins >= a.price) { buy.hidden = false; buy.dataset.kind = 'arm'; buy.dataset.acc = a.id; setBtnText(buy, `BUY FOR ${a.price}`); }
+    else text += ` You need ${a.price - wallet.coins} more coins.`;
+  } else text = `A gold skin for the Metal Hand. Earn it by landing 10 PERFECT parries (${n}/10).`;
+  $('#aiText').textContent = (note ? note + ' ' : '') + text;
+  el.classList.add('again'); el.hidden = false; void el.offsetWidth; el.classList.remove('again');
+}
 function buildTiles() {
   for (const s of SKINS) {
     const b = document.createElement('button');
@@ -1281,7 +1359,7 @@ function buildTiles() {
     const main = ctx; ctx = c.getContext('2d');
     ctx.fillStyle = '#272727'; ctx.fillRect(0, 0, 112, 112);
     ctx.setTransform(1.55, 0, 0, 1.55, 56, 50);
-    const fake = mkPlayer(false); fake.x = 0; fake.y = 0; fake.skin = s.id; fake.swingAge = 9;
+    const fake = mkPlayer(false); fake.x = 0; fake.y = 0; fake.skin = s.id; fake.arm = 'hand'; fake.swingAge = 9;
     drawPlayer(fake, 0);
     ctx = main;
   }
@@ -1293,7 +1371,13 @@ document.querySelectorAll('[data-pw]').forEach(b => b.addEventListener('click', 
   prefs.powerups = b.dataset.pw === 'on'; savePrefs(); refreshCustom();
 }));
 function refreshCustom(tapped) {
-  if (!$('#accGrid').children.length) buildTiles();
+  if (!$('#accGrid').children.length) { buildArmTiles(); buildTiles(); }
+  for (const b of document.querySelectorAll('[data-arm]')) {
+    const a = armById(b.dataset.arm), open = armUnlocked(a);
+    b.classList.toggle('locked', !open);
+    b.setAttribute('aria-pressed', String(prefs.arm === a.id));
+    const l = b.querySelector('.lock, .price'); if (l) l.hidden = open;
+  }
   for (const b of document.querySelectorAll('[data-acc]')) {
     const s = skinById(b.dataset.acc), open = skinUnlocked(s);
     b.classList.toggle('locked', !open);
@@ -1319,13 +1403,21 @@ function showInfo(s, note) {
   else {
     const need = s.price - wallet.coins;
     if (need > 0) text = `Costs ${s.price} coins. You need ${need} more. Every match earns coins from your points.`;
-    else { text = `Costs ${s.price} coins. You have ${wallet.coins}.`; buy.hidden = false; buy.dataset.acc = s.id; setBtnText(buy, `BUY FOR ${s.price}`); }
+    else { text = `Costs ${s.price} coins. You have ${wallet.coins}.`; buy.hidden = false; buy.dataset.kind = 'acc'; buy.dataset.acc = s.id; setBtnText(buy, `BUY FOR ${s.price}`); }
   }
   $('#aiText').textContent = (note ? note + ' ' : '') + text;
   el.classList.add('again'); el.hidden = false; void el.offsetWidth; el.classList.remove('again');
 }
 $('#aiClose').addEventListener('click', () => { $('#accInfo').hidden = true; });
 $('#aiBuy').addEventListener('click', () => {
+  if ($('#aiBuy').dataset.kind === 'arm') {
+    const a = armById($('#aiBuy').dataset.acc);
+    if (!a.price || armUnlocked(a) || wallet.coins < a.price) return;
+    wallet.coins -= a.price; wallet.owned.push(a.id); saveWallet();
+    prefs.arm = a.id; savePrefs(); P.arm = a.id;
+    sfx.register(); refreshCustom(); showArmInfo(a, 'Bought!');
+    return;
+  }
   const s = skinById($('#aiBuy').dataset.acc);
   if (!s.price || wallet.owned.includes(s.id) || wallet.coins < s.price) return;
   wallet.coins -= s.price; wallet.owned.push(s.id); saveWallet();
@@ -1412,7 +1504,7 @@ async function joinGame(raw) {
 function setupConn(c, role) {
   c.on('open', () => {
     NET.conn = c; NET.role = role; NET.rtt = 0.1;
-    send({ t: 'hello', skin: prefs.skin });
+    send({ t: 'hello', skin: prefs.skin, arm: prefs.arm });
     lobbyMsg(role === 'host' ? 'Your friend joined!' : 'Connected! Waiting for the host…');
   });
   c.on('data', onNet);
@@ -1437,6 +1529,7 @@ function onNet(m) {
   switch (m.t) {
     case 'hello':
       NET.remoteSkin = SKINS.some(s => s.id === m.skin) ? m.skin : 'classic';
+      NET.remoteArm = ARMS.some(a => a.id === m.arm) ? m.arm : 'hand';
       if (NET.role === 'host') { NET.arena = prefs.arena; NET.powerups = prefs.powerups; setTimeout(() => { if (NET.role === 'host') ignite(startMatch); }, 700); }
       break;
     case 'full': lobbyMsg('That game already has two players.'); leaveOnline(''); break;
@@ -1446,12 +1539,14 @@ function onNet(m) {
     case 'start':
       if (NET.role !== 'guest') break;
       NET.arena = m.arena; NET.powerups = !!m.pw; NET.remoteSkin = m.skin || NET.remoteSkin;
+      NET.remoteArm = ARMS.some(a => a.id === m.arm) ? m.arm : NET.remoteArm;
       wipe(startMatch);
       break;
     case 'rematch': if (NET.role === 'host') { NET.friendReady = true; if (mode === 'over') setBtnText($('#again'), 'REMATCH (friend is ready!)'); } break;
     case 'in':
       if (NET.role !== 'host' || !B.remote) break;
       B.netX = clamp(+m.x || 0, 0, W); B.netY = clamp(+m.y || 0, 0, H); B.netFace = +m.f || 0;
+      if (isMetal(B) && B.heatT <= 0) B.energy = clamp(+m.e || 0, 0, 100);
       if (!NET.gotFirst) { NET.gotFirst = true; B.x = B.netX; B.y = B.netY; }
       break;
     case 'sw': if (NET.role === 'host' && B.remote) swing(B); break;
@@ -1461,7 +1556,7 @@ function onNet(m) {
 }
 const r1 = v => Math.round(v * 10) / 10;
 function snapshot() {
-  const ps = p => [r1(p.x), r1(p.y), +p.face.toFixed(3), +p.swingT.toFixed(3), +Math.min(9, p.swingAge).toFixed(3), +p.cool.toFixed(2), p.hp, p.shield ? 1 : 0, +p.reachT.toFixed(2), p.turbo ? 1 : 0];
+  const ps = p => [r1(p.x), r1(p.y), +p.face.toFixed(3), +p.swingT.toFixed(3), +Math.min(9, p.swingAge).toFixed(3), +p.cool.toFixed(2), p.hp, p.shield ? 1 : 0, +p.reachT.toFixed(2), p.turbo ? 1 : 0, Math.round(p.energy), +p.heatT.toFixed(2)];
   return {
     t: 's', m: mode, cd: +cd.toFixed(2), r: rally, rt: +rallyT.toFixed(2), sv: server ? who(server) : '',
     h: ps(P), g: ps(B),
@@ -1480,9 +1575,10 @@ function applySnap(s) {
   B.tx = W - h[0]; B.ty = H - h[1];
   if (!NET.gotFirst) { NET.gotFirst = true; B.x = B.tx; B.y = B.ty; }
   B.face = h[2] + Math.PI; B.swingT = h[3]; B.swingAge = h[4]; B.cool = h[5];
-  B.hp = h[6]; B.shield = !!h[7]; B.reachT = h[8]; B.turbo = !!h[9];
+  B.hp = h[6]; B.shield = !!h[7]; B.reachT = h[8]; B.turbo = !!h[9]; B.energy = h[10] ?? 50; B.heatT = h[11] || 0;
   // our own character moves locally; health and power-ups come from the host
   P.hp = g[6]; P.shield = !!g[7]; P.reachT = g[8]; P.turbo = !!g[9];
+  const hot = g[11] || 0; if (hot > 0 && P.heatT <= 0) P.energy = 0; P.heatT = hot;
   const b = s.b, alive = !!b[5];
   ball.sx = W - b[0]; ball.sy = H - b[1]; ball.svx = -b[2]; ball.svy = -b[3];
   ball.vx = ball.svx; ball.vy = ball.svy; ball.speed = b[4]; ball.target = fromWho(b[6]);
@@ -1495,7 +1591,8 @@ function onEvent(e) {
   const p = fromWho(e.w);
   const x = W - (e.x || 0), y = H - (e.y || 0);
   switch (e.k) {
-    case 'parry': if (p === P) { P.swingT = 0; P.cool = 0.08; } fxParry(p, !!e.pf, !!e.f, !!e.tb, x, y, e.sp); break;
+    case 'parry': if (p === P) { P.swingT = 0; P.cool = 0.08; } fxParry(p, !!e.pf, !!e.f, !!e.tb, x, y, e.sp, !!e.od); break;
+    case 'cool': fxCooled(p); break;
     case 'hit': fxHit(p, e.d, x, y); ball.alive = false; break;
     case 'block': fxBlock(p, x, y); break;
     case 'bnc': fxBounce(x, y, e.q); break;
@@ -1521,7 +1618,7 @@ function netTick(dt) {
   if (NET.sendAcc < 1 / 30) return;
   NET.sendAcc = 0;
   if (NET.role === 'host') { if (mode !== 'menu' && mode !== 'over') send(snapshot()); }
-  else if (mode !== 'menu' && mode !== 'over') send({ t: 'in', x: r1(W - P.x), y: r1(H - P.y), f: +(P.face + Math.PI).toFixed(3) });
+  else if (mode !== 'menu' && mode !== 'over') send({ t: 'in', x: r1(W - P.x), y: r1(H - P.y), f: +(P.face + Math.PI).toFixed(3), e: Math.round(P.energy) });
 }
 $('#hostBtn').addEventListener('click', () => { initAudio(); hostGame(); });
 $('#joinBtn').addEventListener('click', () => { initAudio(); joinGame($('#joinCode').value); });
@@ -1548,7 +1645,7 @@ function updatePlayer(p, dt) {
     p.face += wrap(p.netFace - p.face) * k;
   } else {
     const [ix, iy] = !active ? [0, 0] : p.isBot ? botInput(dt) : humanInput();
-    const spd = p.isBot ? MOVE * DIFF[difficulty].move : MOVE;
+    const spd = (p.isBot ? MOVE * DIFF[difficulty].move : MOVE) * (p.heatT > 0 ? OVERHEAT_SLOW : 1);
     const k = Math.min(1, dt * 12);
     p.vx += (ix * spd - p.vx) * k; p.vy += (iy * spd - p.vy) * k;
     p.x += p.vx * dt; p.y += p.vy * dt;
@@ -1566,7 +1663,29 @@ function updatePlayer(p, dt) {
   else { p.swingAge += dt; if (p.cool > 0) p.cool = Math.max(0, p.cool - dt); }
   if (p.flash > 0) p.flash -= dt;
   if (p.reachT > 0 && NET.role !== 'guest') p.reachT = Math.max(0, p.reachT - dt);
+  if (isMetal(p)) updateMetal(p, dt);
 }
+function updateMetal(p, dt) {
+  // energy is tracked by whichever phone moves this character
+  const mine = !p.remote && !(NET.role === 'guest' && p !== P);
+  if (mine) {
+    if (p.heatT > 0) p.energy = 0;
+    else {
+      const m = Math.min(1, Math.hypot(p.vx, p.vy) / MOVE);
+      p.energy = clamp(p.energy - ENERGY_DRAIN * m * dt + (m < 0.1 ? ENERGY_CHARGE * dt : 0), 0, 100);
+      if (p.energy >= 100 && !p.fullPing) { p.fullPing = true; if (p === P) sfx.charged(); }
+      if (p.energy < 95) p.fullPing = false;
+    }
+  }
+  if (p.heatT > 0) {
+    if (Math.random() < dt * 14) parts.push({ x: p.x + rand(-10, 10), y: p.y - 10, vx: rand(-20, 20), vy: rand(-90, -40), life: rand(0.4, 0.8), t: 0, c: 'rgba(220,220,220,0.7)' });
+    if (NET.role !== 'guest') {
+      p.heatT -= dt;
+      if (p.heatT <= 0) { p.heatT = 0; fxCooled(p); emit('cool', { w: who(p) }); }
+    }
+  }
+}
+function fxCooled(p) { addText('COOLED', p.x, p.y + 50, '#4fd2ff', 18, 0.9); if (p === P) sfx.cooled(); }
 function speedFx(dt) {
   const k = speedK();
   // embers shed from the ball
@@ -1586,10 +1705,10 @@ function speedFx(dt) {
 }
 // tier callouts, once per rally
 function speedTiers() {
-  while (tierReached < SPEED_TIERS.length && ball.speed >= SPEED_TIERS[tierReached][0]) {
-    fxTier(tierReached, ball.x, ball.y); emit('tier', { i: tierReached, x: ball.x, y: ball.y });
-    tierReached++;
-  }
+  // when one hit jumps several levels (OVERDRIVE), only call out the highest
+  let top = -1;
+  while (tierReached < SPEED_TIERS.length && ball.speed >= SPEED_TIERS[tierReached][0]) top = tierReached++;
+  if (top >= 0) { fxTier(top, ball.x, ball.y); emit('tier', { i: top, x: ball.x, y: ball.y }); }
 }
 function fxTier(i, x, y) {
   addText(SPEED_TIERS[i][1], W / 2, H / 2 - 60, i >= 2 ? '#ff2a2a' : '#ffffff', 34 + i * 6, 1.1);
@@ -1616,6 +1735,7 @@ function moveBall(dt, homingOn) {
     return;
   }
   ball.speed = Math.max(0, ball.speed - (homingOn ? DRAG : 0) * dt);
+  if (ball.speed > MAX_SPEED) ball.speed = Math.max(MAX_SPEED, ball.speed - (ball.speed - MAX_SPEED) * 0.8 * dt);
   const steps = Math.max(1, Math.ceil(ball.speed * dt / 5)), h = dt / steps;
   for (let i = 0; i < steps; i++) {
     const t = ball.target;
@@ -1735,6 +1855,7 @@ function guestUpdate(dt) {
   const k = Math.min(1, dt * 18);
   B.x += ((B.tx ?? B.x) - B.x) * k; B.y += ((B.ty ?? B.y) - B.y) * k;
   B.swingAge += dt; if (B.flash > 0) B.flash -= dt;
+  if (isMetal(B)) updateMetal(B, dt);
   if (ball.alive) {
     // show the ball where it is on the host right now, not where it was when the snapshot left
     const age = Math.min(0.15, (performance.now() - NET.snapAt) / 1000 + NET.rtt / 2);
@@ -1850,6 +1971,37 @@ function drawPickups(time) {
     ctx.restore();
   }
 }
+function drawMetalHand(p, hx, hy, ha) {
+  const gold = p.arm === 'metalgold', hot = p.heatT > 0, e = p.energy / 100;
+  const hr = p.reachT > 0 ? 12 : 9.5;
+  if (hot) { ctx.shadowColor = '#ff6a2a'; ctx.shadowBlur = 16; }
+  else if (p.turbo) { ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14; }
+  ctx.fillStyle = hot ? '#ff6a2a' : gold ? '#ffd84a' : '#9aa3ad'; circle(hx, hy, hr); ctx.fill();
+  ctx.shadowBlur = 0; ctx.strokeStyle = gold ? '#9a6b00' : '#3f454c'; ctx.lineWidth = 2.5; ctx.stroke();
+  // rivets
+  for (const s of [-1, 1]) { ctx.fillStyle = gold ? '#9a6b00' : '#4a5058'; circle(hx + Math.cos(ha + s * 1.9) * hr * 0.62, hy + Math.sin(ha + s * 1.9) * hr * 0.62, 1.4); ctx.fill(); }
+  // glowing core: dim when empty, white-hot when full
+  const core = hot ? '#fff3b0' : gold ? `hsl(48 100% ${60 + 40 * e}%)` : `hsl(195 100% ${50 + 50 * e}%)`;
+  ctx.shadowColor = hot ? '#ff6a2a' : gold ? '#ffd84a' : '#4fd2ff'; ctx.shadowBlur = hot ? 10 : 2 + 12 * e;
+  ctx.fillStyle = core; circle(hx, hy, 2.4 + 1.6 * e); ctx.fill();
+  ctx.shadowBlur = 0;
+}
+// faint bar on the character's left that brightens while the energy changes
+function drawEnergyBar(p, x, y, r) {
+  if (mode !== 'countdown' && mode !== 'serve' && mode !== 'play' && mode !== 'pause') return;
+  const changing = Math.abs(p.energy - p.eShown) > 0.05;
+  p.eShown = p.energy;
+  p.eVis = Math.min(1, p.eVis * 0.97 + (changing ? 0.12 : 0));
+  const hot = p.heatT > 0, full = p.energy >= 99;
+  const bx = x - r - 14, by = y - r - 2, bh = r * 2 + 4, bw = 5;
+  ctx.globalAlpha = hot ? 0.95 : full ? 0.85 : 0.22 + 0.68 * p.eVis;
+  ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(bx, by, bw, bh);
+  const f = hot ? p.heatT / OVERHEAT_TIME : p.energy / 100;
+  if (hot || full) { ctx.shadowColor = hot ? '#ff6a2a' : '#ffffff'; ctx.shadowBlur = 8; }
+  ctx.fillStyle = hot ? '#ff6a2a' : full ? '#ffffff' : '#4fd2ff';
+  ctx.fillRect(bx, by + bh * (1 - f), bw, bh * f);
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+}
 function drawPlayer(p, time) {
   if (p.exploded) {
     ctx.fillStyle = 'rgba(0,0,0,0.45)'; circle(p.x, p.y, PR * 1.5); ctx.fill();
@@ -1864,7 +2016,7 @@ function drawPlayer(p, time) {
   let ha = p.face + 1.0, hd = PR + 7;
   if (p.swingT > 0) {
     const prog = 1 - p.swingT / SWING;
-    ctx.fillStyle = `rgba(255,255,255,${0.2 * (1 - prog * 0.6)})`;
+    ctx.fillStyle = isMetal(p) ? `rgba(79,210,255,${0.22 * (1 - prog * 0.6)})` : `rgba(255,255,255,${0.2 * (1 - prog * 0.6)})`;
     ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, reachOf(p), p.face - 1.2, p.face + 1.3); ctx.closePath(); ctx.fill();
     ha = p.face + 1.3 - 2.5 * Math.min(1, prog * 1.6); hd = reachOf(p) - 12;
   } else if (p.swingAge < 0.25) {
@@ -1875,10 +2027,14 @@ function drawPlayer(p, time) {
   circle(x, y, r); ctx.fill(); ctx.strokeStyle = p.edge; ctx.lineWidth = 3; ctx.stroke();
   drawSkin(p, x, y, r, 'mid');
   if (!p.dying) {
-    const hx = x + Math.cos(ha) * hd, hy = y + Math.sin(ha) * hd, hr = p.reachT > 0 ? 11 : 8;
-    if (p.turbo) { ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14; }
-    ctx.fillStyle = p.turbo ? '#ffffff' : p.body; circle(hx, hy, hr); ctx.fill();
-    ctx.shadowBlur = 0; ctx.strokeStyle = p.edge; ctx.lineWidth = 2.5; ctx.stroke();
+    const hx = x + Math.cos(ha) * hd, hy = y + Math.sin(ha) * hd;
+    if (isMetal(p)) drawMetalHand(p, hx, hy, ha);
+    else {
+      const hr = p.reachT > 0 ? 11 : 8;
+      if (p.turbo) { ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14; }
+      ctx.fillStyle = p.turbo ? '#ffffff' : p.body; circle(hx, hy, hr); ctx.fill();
+      ctx.shadowBlur = 0; ctx.strokeStyle = p.edge; ctx.lineWidth = 2.5; ctx.stroke();
+    }
   }
   // eyes look where the character faces
   for (const s of [-0.5, 0.5]) {
@@ -1888,6 +2044,7 @@ function drawPlayer(p, time) {
     else { ctx.fillStyle = '#111'; circle(ex, ey, 3.5); ctx.fill(); }
   }
   drawSkin(p, x, y, r, 'over');
+  if (isMetal(p) && !p.dying) drawEnergyBar(p, x, y, r);
   if (p.shield && !p.dying) {
     const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 120);
     ctx.fillStyle = 'rgba(255,255,255,0.07)'; circle(x, y, r + 10); ctx.fill();
@@ -2529,7 +2686,7 @@ function drawBolts(time) {
 
 // customize screen: the chosen skin turning its head
 const pv = $('#skinPreview'), pvx = pv.getContext('2d');
-let previewSkin = null;
+let previewSkin = null, previewArm = null;
 function drawPreview(time) {
   const main = ctx;
   ctx = pvx;
@@ -2538,7 +2695,7 @@ function drawPreview(time) {
   pvx.strokeStyle = '#000'; pvx.lineWidth = 8; pvx.stroke();
   pvx.setTransform(3.4, 0, 0, 3.4, 160, 170);
   const fake = mkPlayer(false);
-  fake.x = 0; fake.y = 0; fake.skin = previewSkin || prefs.skin; fake.swingAge = 9;
+  fake.x = 0; fake.y = 0; fake.skin = previewSkin || prefs.skin; fake.arm = previewArm || prefs.arm; fake.energy = 50 + 50 * Math.sin(time * 1.7); fake.swingAge = 9;
   fake.face = -Math.PI / 2 + Math.sin(time * 1.3) * 0.9;
   pvx.globalAlpha = skinUnlocked(skinById(fake.skin)) ? 1 : 0.4;
   drawPlayer(fake, time);

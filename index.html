@@ -489,6 +489,17 @@ const sfx = {
   overdrive() { noise(0.25, 0.6, 900, 0.6, 'lowpass'); tone('square', 180, 1800, 0.35, 0.16); tone('sine', 90, 40, 0.6, 0.6); setTimeout(() => noise(0.9, 0.18, 4000, 0.8, 'highpass'), 250); },
   charged() { tone('sine', 1568, 1568, 0.08, 0.07); setTimeout(() => tone('sine', 2093, 2093, 0.14, 0.07), 70); },
   cooled() { noise(0.4, 0.12, 5000, 1, 'highpass'); tone('triangle', 660, 990, 0.15, 0.06); },
+  armHit(lab) {
+    if (lab === 'HOME RUN!' || lab === 'CRACK!') { noise(0.08, 0.5, 3500, 1.5, 'highpass'); tone('square', 1400, 900, 0.06, 0.1); }
+    else if (lab === 'POW!') { tone('sine', 140, 60, 0.2, 0.5); noise(0.12, 0.3, 600, 0.8, 'lowpass'); }
+    else if (lab === 'BONG!') { tone('sine', 330, 320, 1.1, 0.25); tone('sine', 495, 480, 0.9, 0.12); }
+    else if (lab === 'SLASH!') noise(0.16, 0.35, 5200, 2.5);
+    else if (lab === 'SPIN!') tone('triangle', 420, 1300, 0.2, 0.1);
+    else if (lab === 'THROW!') tone('square', 300, 900, 0.12, 0.08);
+    else if (lab.includes('ZAP')) { noise(0.22, 0.35, 6000, 0.8, 'highpass'); tone('square', 1600, 300, 0.2, 0.08); }
+    else if (lab.toLowerCase().includes('squawk')) { tone('sawtooth', 1150, 700, 0.14, 0.12); setTimeout(() => tone('sawtooth', 1050, 650, 0.16, 0.1), 120); }
+  },
+  catchIt() { tone('square', 220, 160, 0.1, 0.12); noise(0.06, 0.2, 2000, 1); },
   beep(f) { tone('square', f, f, 0.12, 0.1); },
   boom() { noise(1.0, 0.9, 1400, 0.4, 'lowpass'); tone('sine', 150, 32, 0.7, 0.9); noise(0.3, 0.3, 5000, 0.6); },
   scream(pitch) {
@@ -535,11 +546,11 @@ const POWER_LABEL = { heal: '+20 HP', shield: 'SHIELD', reach: 'BIG HAND', turbo
 const REACH_BOOST = 1.45, REACH_TIME = 8;    // Big Hand: parry reach ×1.45 for 8 s
 const TURBO_BOOST = 1.25;                    // Turbo: next parry hits 25% faster
 // the Metal Hand's hitbox shrinks as it charges: 1.4× when empty, 0.85× when full
-const reachOf = p => REACH * (p.reachT > 0 ? REACH_BOOST : 1) * (isMetal(p) ? 1.4 - 0.55 * p.energy / 100 : 1);
+const reachOf = p => REACH * (p.reachT > 0 ? REACH_BOOST : 1) * (isMetal(p) ? 1.4 - 0.55 * p.energy / 100 : armOf(p).reach || 1);
 
 // saved on this phone: chosen skin/arena and lifetime records
 const prefs = { skin: 'classic', arm: 'hand', arena: 'classic', powerups: true };
-const stats = { games: 0, wins: 0, easyWins: 0, normalWins: 0, hardWins: 0, onlineWins: 0, flawlessWins: 0, bothLoses: 0,
+const stats = { games: 0, wins: 0, easyLosses: 0, easyWins: 0, normalWins: 0, hardWins: 0, onlineWins: 0, flawlessWins: 0, bothLoses: 0,
   perfectsTotal: 0, pickupsTotal: 0, blocksTotal: 0, bestPoints: 0, bestRally: 0, bestCombo: 0, topSpeed: 0 };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem('ultraParryPrefs') || '{}')); } catch (e) {}
 try { Object.assign(stats, JSON.parse(localStorage.getItem('ultraParryStats') || '{}')); } catch (e) {}
@@ -880,13 +891,38 @@ if (!skinUnlocked(skinById(prefs.skin))) prefs.skin = 'classic';
 // Metal Hand: moving drains energy (bigger hitbox, weaker hits), standing still charges it
 // (smaller hitbox, stronger hits). A PERFECT at full charge fires OVERDRIVE past max speed,
 // then the hand overheats and its owner moves 70% slower for 6 seconds.
+// reach / window / cool / gain multiply the normal hitbox, swing window, missed-swing wait and
+// speed added per hit; aim is how far (radians) a hit may stray from the opponent; arc is the swing's width
 const ARMS = [
-  { id: 'hand', name: 'Hand' },
-  { id: 'metal', name: 'Metal Hand', price: 1900, how: 'Land 10 PERFECT parries', unlock: s => s.perfectsTotal >= 10 },
-  { id: 'metalgold', name: 'Gilded Metal Hand', skinOf: 'metal', how: 'Land 10 PERFECT parries', unlock: s => s.perfectsTotal >= 10 },
+  { id: 'hand', name: 'Hand', desc: 'The classic hand. No tricks.' },
+  { id: 'metal', name: 'Metal Hand', price: 1900, how: 'Land 10 PERFECT parries', unlock: s => s.perfectsTotal >= 10,
+    desc: 'Stand still to charge (smaller hitbox, harder hits). Moving drains it (bigger hitbox, weaker hits). A PERFECT at full charge fires OVERDRIVE, then you overheat and move 70% slower for 6 seconds.' },
+  { id: 'metalgold', name: 'Gilded Metal Hand', skinOf: 'metal', how: 'Land 10 PERFECT parries', unlock: s => s.perfectsTotal >= 10,
+    desc: 'The Metal Hand in gold. Same rules, more shine.' },
+  { id: 'pan', name: 'Frying Pan', price: 400, reach: 1.1, window: 1.6, gain: 0.85, arc: 1.6,
+    desc: 'Huge timing window, so it is easy to hit with. Each hit adds 15% less speed, so rallies build slowly. BONG!' },
+  { id: 'bat', name: 'Baseball Bat', price: 600, reach: 1.25, cool: 1.6,
+    desc: 'Long reach (+25%). A PERFECT is a HOME RUN with 50% more speed. A missed swing leaves you waiting longer.' },
+  { id: 'racket', name: 'Tennis Racket', price: 700, reach: 1.1,
+    desc: 'Adds spin: the ball curves on its way, so it is harder to read. Sometimes the curve sends it into a wall.' },
+  { id: 'glove', name: 'Boxing Glove', price: 800, reach: 0.8, window: 0.75, gain: 1.3,
+    desc: 'Short reach and a tight timing window, but every hit adds 30% more speed. POW!' },
+  { id: 'katana', name: 'Katana', how: 'Get a COMBO ×5', unlock: s => s.bestCombo >= 5, window: 0.6, cool: 0.6, aim: 0.15, arc: 0.7,
+    desc: 'A quick, narrow slash. Hits fly straight at your opponent, so fewer wall bounces slow the ball.' },
+  { id: 'thunder', name: 'Thunder Gauntlet', how: 'Reach max speed (1450)', unlock: s => s.topSpeed >= 1450, hold: 'charge',
+    desc: 'Hold PARRY to charge, let go to swing. A full 1-second charge hits up to 40% harder. Charge too long and the ball hits you.' },
+  { id: 'magnet', name: 'Magnet Glove', how: 'Win 3 online matches', unlock: s => s.onlineWins >= 3, hold: 'catch', gain: 0.9,
+    desc: 'Hold PARRY to catch the ball (up to 0.4 s), aim with your thumb, let go to throw it. The ball loses speed while you hold it.' },
+  { id: 'boomerang', name: 'Boomerang Arm', how: 'Beat the Hard bot', unlock: s => s.hardWins >= 1,
+    desc: 'Tap PARRY to throw your hand at the ball and hit it from far away. If it misses, you have no hand for 1 second.' },
+  { id: 'chicken', name: 'Rubber Chicken', secret: true, how: 'Lose to the Easy bot', unlock: s => s.easyLosses >= 1,
+    desc: 'Every hit does something random: a mega blast, a sad little tap, or a wild curve. SQUAWK!' },
 ];
 const armById = id => ARMS.find(a => a.id === id) || ARMS[0];
-const armUnlocked = a => a.id === 'hand' || a.unlock(stats) || (!!a.price && wallet.owned.includes(a.id));
+const armOf = p => armById(p.arm);
+const armUnlocked = a => a.id === 'hand' || (!!a.unlock && a.unlock(stats)) || (!!a.price && wallet.owned.includes(a.id));
+const BOT_ARMS = ['hand', 'pan', 'bat', 'racket', 'glove', 'katana', 'chicken'];   // arms the bot knows how to use
+const HOLD_MAX = 0.4, BOOM_SPEED = 950, BOOM_OUT = 0.3, NO_HAND = 1;
 const isMetal = p => p.arm === 'metal' || p.arm === 'metalgold';
 const ENERGY_DRAIN = 35, ENERGY_CHARGE = 25;    // per second at full speed / standing still
 const OVERHEAT_TIME = 6, OVERHEAT_SLOW = 0.3;   // overheated: move at 30% speed
@@ -931,6 +967,7 @@ function mkPlayer(isBot) {
     dying: false, dieT: 0, exploded: false, skin: isBot ? 'classic' : prefs.skin,
     shield: false, reachT: 0, turbo: false, netX: W / 2, netY: H * 0.2, netFace: Math.PI / 2,
     arm: isBot ? 'hand' : prefs.arm, energy: 50, heatT: 0, eShown: 50, eVis: 0, fullPing: false,
+    power: 1, charging: false, charge: 0, holding: false, aimX: 0, aimY: 0, boom: null,
     stats: { parries: 0, perfects: 0, speedPts: 0, dealt: 0, combo: 0, bestCombo: 0, pickups: 0, blocks: 0, hitsTaken: 0 },
     body: isBot ? '#767676' : '#e4e4e4', edge: isBot ? '#c4c4c4' : '#ffffff', pitch: isBot ? 290 : 430,
   };
@@ -941,7 +978,8 @@ const foeName = () => NET.role ? 'FRIEND' : 'BOT';
 function resetWorld() {
   P = mkPlayer(false); B = mkPlayer(true);
   if (NET.role) { B.isBot = false; B.remote = true; B.skin = NET.remoteSkin; B.arm = NET.remoteArm; }
-  ball = { x: W / 2, y: H / 2, vx: 190, vy: 260, speed: 320, homing: 0, target: null, trail: [], alive: true, pend: 0, sx: 0, sy: 0, svx: 0, svy: 0 };
+  else if (difficulty !== 'easy') B.arm = BOT_ARMS[(Math.random() * BOT_ARMS.length) | 0];
+  ball = { x: W / 2, y: H / 2, vx: 190, vy: 260, speed: 320, homing: 0, target: null, trail: [], alive: true, pend: 0, curve: 0, held: null, holdT: 0, heldPerfect: false, sx: 0, sy: 0, svx: 0, svy: 0 };
 }
 resetWorld();
 
@@ -954,6 +992,7 @@ function startMatch() {
   parts.length = texts.length = conf.length = floorConf.length = rings.length = shimmers.length = pickups.length = 0;
   ball.alive = false; pickupT = rand(5, 8);
   mode = 'countdown'; cd = 3; lastBeep = 4; freezeT = 0; freezeP = null; bolts = [];
+  if (!NET.role && B.arm !== 'hand') addText(`BOT HAS: ${armById(B.arm).name.toUpperCase()}`, W / 2, H * 0.3, '#ededed', 24, 2.6);
   combo = 0; bestCombo = 0; $('#combo').hidden = true; streaks.length = 0;
   NET.friendReady = false; NET.gotFirst = false;
   hideOverlays(); $('#parryBtn').hidden = false;
@@ -961,7 +1000,7 @@ function startMatch() {
 }
 function beginServe(s) {
   mode = 'serve'; server = s;
-  ball.alive = true; ball.target = other(s); ball.speed = BASE_SPEED; ball.trail.length = 0; ball.pend = 0;
+  ball.alive = true; ball.target = other(s); ball.speed = BASE_SPEED; ball.trail.length = 0; ball.pend = 0; ball.curve = 0; ball.held = null;
   rally = 0; rallyT = RALLY_TIME; bot.plan = false; tierReached = 0; serveWait = 0;
   bot.serveT = rand(0.7, 1.5);
   fxServe(s); emit('serve', { w: who(s) });
@@ -979,28 +1018,112 @@ function launchServe(s) {
   if (o === B && !B.remote) botPlan();
 }
 function fxLaunch(x, y, speed) { sfx.parry(speed); sparks(x, y, 8, '#ffffff'); }
-function swing(p) {
+function swing(p, power) {
   if (freezeT > 0 || p.dying || p.swingT > 0 || p.cool > 0) return;
   if (mode !== 'play' && mode !== 'serve') return;
-  p.swingT = SWING; p.swingAge = 0; sfx.swing();
-  if (NET.role === 'guest') { send({ t: 'sw' }); return; }   // the host decides what the swing hits
+  const A = armOf(p);
+  p.power = power ?? 1;
+  if (A.id === 'boomerang' && mode === 'play') {
+    if (p.boom) return;
+    if (NET.role === 'guest') { send({ t: 'sw' }); sfx.swing(); return; }
+    throwBoom(p); return;
+  }
+  p.swingT = SWING * (A.window || 1); p.swingAge = 0; sfx.swing();
+  if (NET.role === 'guest') { send({ t: 'sw', c: +p.power.toFixed(2), h: p.holding ? 1 : 0 }); return; }   // the host decides what the swing hits
   if (mode === 'serve' && p === server) launchServe(p);
 }
+// PARRY pressed / released: most arms swing on press; the Thunder Gauntlet charges until release,
+// the Magnet Glove keeps hold of a caught ball until release
+function pressParry() {
+  if (!P) return;
+  const A = armOf(P);
+  if (A.hold === 'charge' && mode === 'play') {
+    if (!P.dying && P.cool <= 0 && P.swingT <= 0 && freezeT <= 0) { P.charging = true; P.charge = 0; }
+    return;
+  }
+  if (A.hold === 'catch') P.holding = true;
+  swing(P);
+}
+function releaseParry() {
+  if (!P) return;
+  if (P.charging) { P.charging = false; swing(P, P.charge); P.charge = 0; }
+  if (P.holding) {
+    P.holding = false;
+    const [ax, ay] = humanInput(); P.aimX = ax; P.aimY = ay;
+    if (NET.role === 'guest') send({ t: 'rel', ax: -ax, ay: -ay });
+  }
+}
+function throwBoom(p) {
+  const a = ball.alive ? Math.atan2(ball.y - p.y, ball.x - p.x) : p.face;
+  p.boom = { x: p.x, y: p.y, vx: Math.cos(a) * BOOM_SPEED, vy: Math.sin(a) * BOOM_SPEED, t: 0, back: false, hit: false, spin: 0 };
+  sfx.swing();
+}
+function updateBoom(p, dt) {
+  const b = p.boom;
+  b.t += dt; b.spin += dt * 25;
+  if (!b.back && b.t > BOOM_OUT) b.back = true;
+  if (b.back) {
+    const dx = p.x - b.x, dy = p.y - b.y, d = Math.hypot(dx, dy);
+    if (d < PR + 6) {
+      p.boom = null; p.cool = b.hit ? 0.1 : NO_HAND;
+      if (!b.hit) { fxNoHand(p); emit('nohand', { w: who(p) }); }
+      return;
+    }
+    b.vx = dx / d * 1150; b.vy = dy / d * 1150;
+  }
+  b.x += b.vx * dt; b.y += b.vy * dt;
+  if (b.x < 10 || b.x > W - 10 || b.y < 10 || b.y > H - 10) { b.back = true; b.x = clamp(b.x, 10, W - 10); b.y = clamp(b.y, 10, H - 10); }
+}
+function fxNoHand(p) { addText('NO HAND!', p.x, p.y + 50, '#cfcfcf', 18, 0.9); }
 function parry(p, d) {
-  const o = other(p);
-  const perfect = d < PR + BR + 16, fast = ball.speed >= FAST_FLASH, turbo = p.turbo;
-  const a = Math.atan2(o.y - ball.y, o.x - ball.x) + rand(-0.85, 0.85);
+  const perfect = d < PR + BR + 16;
+  if (armOf(p).hold === 'catch' && !ball.held) {
+    // Magnet Glove: grab the ball first, throw it on release
+    ball.held = p; ball.holdT = 0; ball.heldPerfect = perfect; ball.pend = 0;
+    p.swingT = 0; p.cool = 0.08;
+    fxCatch(p); emit('catch', { w: who(p) });
+    return;
+  }
+  hitBack(p, perfect, null);
+}
+function releaseHeld() {
+  const p = ball.held, toFoe = p === P ? -1 : 1;
+  ball.held = null;
+  const aim = Math.hypot(p.aimX, p.aimY) > 0.3 && p.aimY * toFoe > 0.1 ? Math.atan2(p.aimY, p.aimX) : null;
+  hitBack(p, ball.heldPerfect, aim);
+}
+function hitBack(p, perfect, aimAngle) {
+  const o = other(p), A = armOf(p);
+  const fast = ball.speed >= FAST_FLASH, turbo = p.turbo;
+  const a = aimAngle ?? Math.atan2(o.y - ball.y, o.x - ball.x) + rand(-1, 1) * (A.aim ?? 0.85);
   const metal = isMetal(p), e = metal ? p.energy / 100 : 0;
   const overdrive = metal && perfect && p.energy >= 99 && p.heatT <= 0;
-  let sp;
+  let sp, lab = '', curve = 0;
   if (overdrive) sp = Math.max(ball.speed * 1.6, 1950);
   else if (metal) sp = perfect ? ball.speed * (1.1 + 0.2 * e) + 50 + 100 * e : ball.speed * (1.02 + 0.18 * e) + 10 + 60 * e;
-  else sp = perfect ? ball.speed * 1.2 + 100 : ball.speed * 1.1 + 40;
+  else {
+    const base = perfect ? ball.speed * 1.2 + 100 : ball.speed * 1.1 + 40;
+    let g = A.gain || 1;
+    if (A.id === 'bat') { if (perfect) { g *= 1.5; lab = 'HOME RUN!'; } else lab = 'CRACK!'; }
+    else if (A.id === 'glove') lab = 'POW!';
+    else if (A.id === 'pan') lab = 'BONG!';
+    else if (A.id === 'katana') lab = 'SLASH!';
+    else if (A.id === 'racket') { lab = 'SPIN!'; curve = rand(1.2, 2.2) * (Math.random() < 0.5 ? -1 : 1); }
+    else if (A.id === 'magnet') lab = 'THROW!';
+    else if (A.id === 'thunder') { g = 0.6 + 1.6 * clamp(p.power, 0, 1); lab = p.power > 0.95 ? 'MAX ZAP!' : 'ZAP!'; }
+    else if (A.id === 'chicken') {
+      const r = Math.random();
+      if (r < 0.33) { g = 2.2; lab = 'MEGA SQUAWK!'; } else if (r < 0.66) { g = 0.3; lab = 'squawk…'; }
+      else { lab = 'SQUAWK!'; curve = rand(2.2, 3) * (Math.random() < 0.5 ? -1 : 1); }
+    }
+    sp = ball.speed + (base - ball.speed) * g;
+  }
   if (turbo) { sp *= TURBO_BOOST; p.turbo = false; }
   ball.speed = Math.min(overdrive ? ULTRA_MAX : MAX_SPEED, sp);
   if (overdrive) { p.heatT = OVERHEAT_TIME; p.energy = 0; }
   // sometimes the ball takes a lazy, wandering path that bleeds speed off walls
-  ball.homing = Math.random() < 0.3 ? rand(0.6, 1.1) : rand(1.7, 3.2);
+  ball.homing = A.id === 'katana' ? rand(3, 3.6) : Math.random() < 0.3 ? rand(0.6, 1.1) : rand(1.7, 3.2);
+  ball.curve = curve;
   ball.vx = Math.cos(a) * ball.speed; ball.vy = Math.sin(a) * ball.speed;
   ball.target = o; ball.pend = 0;
   rally++; bestRally = Math.max(bestRally, rally); rallyT = RALLY_TIME;
@@ -1008,12 +1131,19 @@ function parry(p, d) {
   st.parries++; st.speedPts += Math.round(ball.speed / 10);
   if (perfect) { st.perfects++; st.combo++; st.bestCombo = Math.max(st.bestCombo, st.combo); } else st.combo = 0;
   p.swingT = 0; p.cool = 0.08;
-  fxParry(p, perfect, fast, turbo, ball.x, ball.y, ball.speed, overdrive);
-  emit('parry', { w: who(p), pf: perfect ? 1 : 0, f: fast ? 1 : 0, tb: turbo ? 1 : 0, od: overdrive ? 1 : 0, x: ball.x, y: ball.y, sp: ball.speed });
+  fxParry(p, perfect, fast, turbo, ball.x, ball.y, ball.speed, overdrive, lab);
+  emit('parry', { w: who(p), pf: perfect ? 1 : 0, f: fast ? 1 : 0, tb: turbo ? 1 : 0, od: overdrive ? 1 : 0, lab, x: ball.x, y: ball.y, sp: ball.speed });
   if (!NET.role) { if (o === B) botPlan(); else bot.plan = false; }
 }
-function fxParry(p, perfect, fast, turbo, x, y, speed, od) {
+function fxCatch(p) { addText('CATCH!', p.x, p.y - 44, '#ffffff', 22, 0.6); sfx.catchIt(); }
+function fxParry(p, perfect, fast, turbo, x, y, speed, od, lab) {
   if (fast) whiteFlash = 1;
+  if (lab) {
+    addText(lab, x, y - 62, lab === 'HOME RUN!' || lab === 'MAX ZAP!' || lab === 'MEGA SQUAWK!' ? '#ffd23f' : '#ffffff', lab === 'HOME RUN!' ? 32 : 24, 0.8);
+    sfx.armHit(lab);
+    if (lab === 'SLASH!') for (let i = 0; i < 3; i++) streaks.push({ x: x + rand(-30, 30), y: y + rand(-30, 30), a: rand(0, 6.28), len: 120, sp: 900, life: 0.25, t: 0 });
+    if (lab.includes('ZAP')) sparks(x, y, 16, '#4fd2ff');
+  }
   if (od) {
     addText('OVERDRIVE!', x, y - 72, '#ffffff', 36, 1.1);
     addText('OVERHEAT', p.x, p.y + 52, '#ff8a3b', 20, 1.4);
@@ -1043,7 +1173,7 @@ function fxParry(p, perfect, fast, turbo, x, y, speed, od) {
   }
 }
 function hit(p) {
-  ball.pend = 0;
+  ball.pend = 0; ball.curve = 0; ball.held = null;
   if (p.shield) { block(p); return; }
   const dmg = Math.round(ball.speed / DMG_DIV);
   other(p).stats.dealt += Math.min(p.hp, dmg);
@@ -1130,6 +1260,7 @@ function showOver() {
     if (!st.hitsTaken) stats.flawlessWins++;
   }
   if (result === 'both') stats.bothLoses++;
+  if (result === 'lose' && !NET.role && difficulty === 'easy') stats.easyLosses++;
   stats.perfectsTotal += st.perfects; stats.pickupsTotal += st.pickups || 0; stats.blocksTotal += st.blocks || 0;
   stats.bestPoints = Math.max(stats.bestPoints, final);
   stats.bestRally = Math.max(stats.bestRally, bestRally);
@@ -1247,15 +1378,19 @@ const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 addEventListener('keydown', e => {
   if (e.target && e.target.tagName === 'INPUT') return;
   keys[e.code] = true;
-  if ((e.code === 'Space' || e.code === 'KeyJ' || e.code === 'KeyK') && !e.repeat) { if (P) swing(P); e.preventDefault(); }
+  if ((e.code === 'Space' || e.code === 'KeyJ' || e.code === 'KeyK') && !e.repeat) { pressParry(); e.preventDefault(); }
 });
-addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (e.code === 'Space' || e.code === 'KeyJ' || e.code === 'KeyK') releaseParry();
+});
 cv.addEventListener('pointerdown', e => {
   if (e.clientX < innerWidth * 0.62 && joy.id === null) {
     joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = joy.y = 0;
     try { cv.setPointerCapture(e.pointerId); } catch (_) {}
-  } else swing(P);
+  } else { parryPtr = e.pointerId; pressParry(); }
 });
+let parryPtr = null;   // a finger tapping the right side of the arena counts as the PARRY button
 cv.addEventListener('pointermove', e => {
   if (e.pointerId !== joy.id) return;
   let dx = e.clientX - joy.ox, dy = e.clientY - joy.oy;
@@ -1263,11 +1398,14 @@ cv.addEventListener('pointermove', e => {
   if (d > R) { joy.ox += dx - dx / d * R; joy.oy += dy - dy / d * R; dx = dx / d * R; dy = dy / d * R; }
   joy.x = dx / R; joy.y = dy / R;
 });
-const endJoy = e => { if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; } };
+const endJoy = e => {
+  if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; }
+  if (e.pointerId === parryPtr) { parryPtr = null; releaseParry(); }
+};
 cv.addEventListener('pointerup', endJoy); cv.addEventListener('pointercancel', endJoy);
 const pb = $('#parryBtn');
-pb.addEventListener('pointerdown', e => { e.preventDefault(); pb.classList.add('down'); swing(P); });
-['pointerup', 'pointercancel', 'pointerleave'].forEach(n => pb.addEventListener(n, () => pb.classList.remove('down')));
+pb.addEventListener('pointerdown', e => { e.preventDefault(); pb.classList.add('down'); pressParry(); });
+['pointerup', 'pointercancel', 'pointerleave'].forEach(n => pb.addEventListener(n, () => { if (pb.classList.contains('down')) releaseParry(); pb.classList.remove('down'); }));
 pb.addEventListener('contextmenu', e => e.preventDefault());
 
 function humanInput() {
@@ -1307,12 +1445,12 @@ function buildArmTiles() {
     const b = document.createElement('button');
     b.className = 'tile'; b.dataset.arm = a.id;
     const c = document.createElement('canvas'); c.width = 112; c.height = 112;
-    const name = document.createElement('span'); name.textContent = a.name;
+    const name = document.createElement('span'); name.className = 'tile-name'; name.textContent = a.name;
     b.append(c, name);
     const l = document.createElement('span');
     if (a.price) { l.className = 'price'; l.innerHTML = `<i class="coin"></i>${a.price}`; }
     else if (a.unlock) { l.className = 'lock'; l.textContent = 'LOCKED'; }
-    if (a.unlock) b.append(l);
+    if (a.price || a.unlock) b.append(l);
     b.addEventListener('click', () => {
       if (armUnlocked(a)) { prefs.arm = a.id; savePrefs(); P.arm = a.id; }
       previewArm = a.id; refreshCustom(); showArmInfo(a);
@@ -1320,25 +1458,28 @@ function buildArmTiles() {
     $('#armGrid').append(b);
     const main = ctx; ctx = c.getContext('2d');
     ctx.fillStyle = '#272727'; ctx.fillRect(0, 0, 112, 112);
-    ctx.setTransform(2.1, 0, 0, 2.1, 46, 62);
+    // body bottom-left, item reaching diagonally to the top-right so long ones fit
+    ctx.setTransform(1.2, 0, 0, 1.2, 34, 80);
     const fake = mkPlayer(false); fake.x = 0; fake.y = 0; fake.skin = 'classic'; fake.arm = a.id; fake.energy = 100; fake.swingAge = 9;
+    fake.face = -Math.PI / 2 - 0.2;
     drawPlayer(fake, 0);
     ctx = main;
   }
 }
 function showArmInfo(a, note) {
   const el = $('#accInfo'), buy = $('#aiBuy'), n = Math.min(10, stats.perfectsTotal);
-  $('#aiName').textContent = a.name; $('#aiName').dataset.t = a.name;
+  const open = armUnlocked(a), name = a.secret && !open ? '???' : a.name;
+  $('#aiName').textContent = name; $('#aiName').dataset.t = name;
   buy.hidden = true;
   let text;
-  if (armUnlocked(a)) {
-    text = a.id === 'hand' ? 'Equipped. The classic hand.'
-      : 'Equipped. Stand still to charge (smaller hitbox, harder hits). Moving drains it (bigger hitbox, weaker hits). A PERFECT at full charge fires OVERDRIVE, then you overheat and move 70% slower for 6 seconds.';
-  } else if (a.price) {
-    text = `Costs ${a.price} coins, or get it free (plus the Gilded skin) by landing 10 PERFECT parries. You have ${n}/10.`;
+  if (open) text = 'Equipped. ' + a.desc;
+  else if (a.secret) text = 'A secret arm. Hint: sometimes losing is winning.';
+  else if (a.price) {
+    text = a.desc + ` Costs ${a.price} coins` + (a.unlock ? `, or get it free (plus the Gilded skin) by landing 10 PERFECT parries (${n}/10).` : '.');
     if (wallet.coins >= a.price) { buy.hidden = false; buy.dataset.kind = 'arm'; buy.dataset.acc = a.id; setBtnText(buy, `BUY FOR ${a.price}`); }
     else text += ` You need ${a.price - wallet.coins} more coins.`;
-  } else text = `A gold skin for the Metal Hand. Earn it by landing 10 PERFECT parries (${n}/10).`;
+  } else if (a.skinOf) text = `A gold skin for the Metal Hand. Earn it by landing 10 PERFECT parries (${n}/10).`;
+  else text = `${a.desc} Badge. To earn it: ${a.how}.`;
   $('#aiText').textContent = (note ? note + ' ' : '') + text;
   el.classList.add('again'); el.hidden = false; void el.offsetWidth; el.classList.remove('again');
 }
@@ -1374,6 +1515,7 @@ function refreshCustom(tapped) {
   if (!$('#accGrid').children.length) { buildArmTiles(); buildTiles(); }
   for (const b of document.querySelectorAll('[data-arm]')) {
     const a = armById(b.dataset.arm), open = armUnlocked(a);
+    b.querySelector('.tile-name').textContent = a.secret && !open ? '???' : a.name;
     b.classList.toggle('locked', !open);
     b.setAttribute('aria-pressed', String(prefs.arm === a.id));
     const l = b.querySelector('.lock, .price'); if (l) l.hidden = open;
@@ -1547,16 +1689,18 @@ function onNet(m) {
       if (NET.role !== 'host' || !B.remote) break;
       B.netX = clamp(+m.x || 0, 0, W); B.netY = clamp(+m.y || 0, 0, H); B.netFace = +m.f || 0;
       if (isMetal(B) && B.heatT <= 0) B.energy = clamp(+m.e || 0, 0, 100);
+      B.charge = clamp(+m.ch || 0, 0, 1); B.charging = B.charge > 0;
       if (!NET.gotFirst) { NET.gotFirst = true; B.x = B.netX; B.y = B.netY; }
       break;
-    case 'sw': if (NET.role === 'host' && B.remote) swing(B); break;
+    case 'sw': if (NET.role === 'host' && B.remote) { if (m.h) B.holding = true; swing(B, m.c ?? 1); } break;
+    case 'rel': if (NET.role === 'host' && B.remote) { B.holding = false; B.aimX = clamp(+m.ax || 0, -1, 1); B.aimY = clamp(+m.ay || 0, -1, 1); } break;
     case 's': if (NET.role === 'guest') applySnap(m); break;
     case 'ev': if (NET.role === 'guest') onEvent(m); break;
   }
 }
 const r1 = v => Math.round(v * 10) / 10;
 function snapshot() {
-  const ps = p => [r1(p.x), r1(p.y), +p.face.toFixed(3), +p.swingT.toFixed(3), +Math.min(9, p.swingAge).toFixed(3), +p.cool.toFixed(2), p.hp, p.shield ? 1 : 0, +p.reachT.toFixed(2), p.turbo ? 1 : 0, Math.round(p.energy), +p.heatT.toFixed(2)];
+  const ps = p => [r1(p.x), r1(p.y), +p.face.toFixed(3), +p.swingT.toFixed(3), +Math.min(9, p.swingAge).toFixed(3), +p.cool.toFixed(2), p.hp, p.shield ? 1 : 0, +p.reachT.toFixed(2), p.turbo ? 1 : 0, Math.round(p.energy), +p.heatT.toFixed(2), p.charging ? +p.charge.toFixed(2) : 0, p.boom ? r1(p.boom.x) : -1, p.boom ? r1(p.boom.y) : -1];
   return {
     t: 's', m: mode, cd: +cd.toFixed(2), r: rally, rt: +rallyT.toFixed(2), sv: server ? who(server) : '',
     h: ps(P), g: ps(B),
@@ -1576,6 +1720,10 @@ function applySnap(s) {
   if (!NET.gotFirst) { NET.gotFirst = true; B.x = B.tx; B.y = B.ty; }
   B.face = h[2] + Math.PI; B.swingT = h[3]; B.swingAge = h[4]; B.cool = h[5];
   B.hp = h[6]; B.shield = !!h[7]; B.reachT = h[8]; B.turbo = !!h[9]; B.energy = h[10] ?? 50; B.heatT = h[11] || 0;
+  B.charge = h[12] || 0; B.charging = B.charge > 0;
+  for (const [p, q] of [[B, h], [P, g]]) {
+    if (q[13] >= 0) { if (!p.boom) p.boom = { spin: 0 }; p.boom.x = W - q[13]; p.boom.y = H - q[14]; } else p.boom = null;
+  }
   // our own character moves locally; health and power-ups come from the host
   P.hp = g[6]; P.shield = !!g[7]; P.reachT = g[8]; P.turbo = !!g[9];
   const hot = g[11] || 0; if (hot > 0 && P.heatT <= 0) P.energy = 0; P.heatT = hot;
@@ -1591,7 +1739,9 @@ function onEvent(e) {
   const p = fromWho(e.w);
   const x = W - (e.x || 0), y = H - (e.y || 0);
   switch (e.k) {
-    case 'parry': if (p === P) { P.swingT = 0; P.cool = 0.08; } fxParry(p, !!e.pf, !!e.f, !!e.tb, x, y, e.sp, !!e.od); break;
+    case 'parry': if (p === P) { P.swingT = 0; P.cool = 0.08; } fxParry(p, !!e.pf, !!e.f, !!e.tb, x, y, e.sp, !!e.od, e.lab || ''); break;
+    case 'catch': fxCatch(p); break;
+    case 'nohand': fxNoHand(p); break;
     case 'cool': fxCooled(p); break;
     case 'hit': fxHit(p, e.d, x, y); ball.alive = false; break;
     case 'block': fxBlock(p, x, y); break;
@@ -1618,7 +1768,7 @@ function netTick(dt) {
   if (NET.sendAcc < 1 / 30) return;
   NET.sendAcc = 0;
   if (NET.role === 'host') { if (mode !== 'menu' && mode !== 'over') send(snapshot()); }
-  else if (mode !== 'menu' && mode !== 'over') send({ t: 'in', x: r1(W - P.x), y: r1(H - P.y), f: +(P.face + Math.PI).toFixed(3), e: Math.round(P.energy) });
+  else if (mode !== 'menu' && mode !== 'over') send({ t: 'in', x: r1(W - P.x), y: r1(H - P.y), f: +(P.face + Math.PI).toFixed(3), e: Math.round(P.energy), ch: P.charging ? +P.charge.toFixed(2) : 0 });
 }
 $('#hostBtn').addEventListener('click', () => { initAudio(); hostGame(); });
 $('#joinBtn').addEventListener('click', () => { initAudio(); joinGame($('#joinCode').value); });
@@ -1659,11 +1809,17 @@ function updatePlayer(p, dt) {
     const dx = p.x - q.x, dy = p.y - q.y, d = Math.hypot(dx, dy), m = q.r + PR;
     if (d < m && d > 0.01) { p.x = q.x + dx / d * m; p.y = q.y + dy / d * m; }
   }
-  if (p.swingT > 0) { p.swingT -= dt; p.swingAge += dt; if (p.swingT <= 0) { p.swingT = 0; p.cool = COOLDOWN; } }
+  if (p.swingT > 0) { p.swingT -= dt; p.swingAge += dt; if (p.swingT <= 0) { p.swingT = 0; p.cool = COOLDOWN * (armOf(p).cool || 1); } }
   else { p.swingAge += dt; if (p.cool > 0) p.cool = Math.max(0, p.cool - dt); }
   if (p.flash > 0) p.flash -= dt;
   if (p.reachT > 0 && NET.role !== 'guest') p.reachT = Math.max(0, p.reachT - dt);
   if (isMetal(p)) updateMetal(p, dt);
+  if (p.charging) {
+    if (mode !== 'play') p.charging = false;
+    else if (!p.remote) p.charge = Math.min(1, p.charge + dt);
+    if (Math.random() < dt * 30 * (0.3 + p.charge)) sparks(p.x + Math.cos(p.face + 1) * (PR + 7), p.y + Math.sin(p.face + 1) * (PR + 7), 1, '#4fd2ff');
+  }
+  if (p.boom) { if (NET.role !== 'guest') updateBoom(p, dt); else p.boom.spin += dt * 25; }
 }
 function updateMetal(p, dt) {
   // energy is tracked by whichever phone moves this character
@@ -1726,6 +1882,16 @@ function fxBounce(x, y, k) {
   if (k > 0.25) { rings.push({ x, y, r: 6, max: 30 + 90 * k, life: 0.25 + 0.2 * k, t: 0, w: 2 + 5 * k }); shake = Math.max(shake, 10 * k); }
 }
 function moveBall(dt, homingOn) {
+  if (ball.held) {
+    // Magnet Glove: the ball rides in the hand, losing speed, until release or 0.4 s
+    const p = ball.held;
+    ball.holdT += dt;
+    ball.speed = Math.max(MIN_SPEED + 40, ball.speed * (1 - 0.45 * dt));
+    ball.x = p.x + Math.cos(p.face) * (PR + BR + 4); ball.y = p.y + Math.sin(p.face) * (PR + BR + 4);
+    if (!p.holding || ball.holdT >= HOLD_MAX) releaseHeld();
+    return;
+  }
+  if (ball.curve) ball.curve *= Math.max(0, 1 - 0.9 * dt);
   if (ball.pend > 0) {
     // the ball reached the guest: hold it while their swing may still be on the way
     const t = ball.target, d = Math.hypot(t.x - ball.x, t.y - ball.y);
@@ -1740,6 +1906,7 @@ function moveBall(dt, homingOn) {
   for (let i = 0; i < steps; i++) {
     const t = ball.target;
     let a = Math.atan2(ball.vy, ball.vx);
+    if (homingOn && ball.curve) a += ball.curve * h;
     if (homingOn && t) {
       const want = Math.atan2(t.y - ball.y, t.x - ball.x);
       a += clamp(wrap(want - a), -ball.homing * h, ball.homing * h);
@@ -1763,6 +1930,10 @@ function moveBall(dt, homingOn) {
     if (bounced && homingOn) onBounce();
     if (homingOn && t) {
       const d = Math.hypot(t.x - ball.x, t.y - ball.y);
+      if (t.boom && !t.boom.hit && Math.hypot(ball.x - t.boom.x, ball.y - t.boom.y) < BR + 14) {
+        t.boom.hit = true; t.boom.back = true;
+        hitBack(t, Math.hypot(ball.x - t.boom.x, ball.y - t.boom.y) < BR + 6, null); return;
+      }
       if (t.swingT > 0 && d < reachOf(t) + BR) { parry(t, d); return; }
       if (d < PR + BR) {
         if (t.remote && !t.shield) { ball.pend = guestGrace(); return; }
@@ -1834,7 +2005,7 @@ function update(dt) {
     if (mode === 'play') {
       topSpeed = Math.max(topSpeed, ball.speed);
       speedFx(dt); speedTiers();
-      if (ball.pend <= 0) rallyT -= dt;
+      if (ball.pend <= 0 && !ball.held) rallyT -= dt;
       if (ball.speed < MIN_SPEED) bothLose('TOO SLOW!');
       else if (rallyT <= 0) bothLose("TIME'S UP!");
     }
@@ -1855,6 +2026,7 @@ function guestUpdate(dt) {
   const k = Math.min(1, dt * 18);
   B.x += ((B.tx ?? B.x) - B.x) * k; B.y += ((B.ty ?? B.y) - B.y) * k;
   B.swingAge += dt; if (B.flash > 0) B.flash -= dt;
+  if (B.boom) B.boom.spin += dt * 25;
   if (isMetal(B)) updateMetal(B, dt);
   if (ball.alive) {
     // show the ball where it is on the host right now, not where it was when the snapshot left
@@ -1971,6 +2143,60 @@ function drawPickups(time) {
     ctx.restore();
   }
 }
+// held items are drawn pointing away from the body, through the hand
+function drawArmItem(p, hx, hy, ha) {
+  const id = p.arm, c = Math.cos(ha), sn = Math.sin(ha);
+  const out = d => [hx + c * d, hy + sn * d];
+  const grip = () => { dot(p.body, hx, hy, 6.5); ring(p.edge, hx, hy, 6.5, 2); };
+  ctx.lineCap = 'round';
+  if (id === 'bat') {
+    line('#8a5a2b', 7, hx, hy, ...out(20)); line('#c98f4e', 11, ...out(18), ...out(36)); grip();
+  } else if (id === 'glove') {
+    dot('#ffffff', hx - c * 7, hy - sn * 7, 6.5); dot('#d61f1f', ...out(3), 12.5); ring('#7a0f0f', ...out(3), 12.5, 2.2);
+    dot('rgba(255,255,255,0.45)', ...out(6), 3.5);
+  } else if (id === 'pan') {
+    line('#2a2a2a', 5, hx, hy, ...out(16)); dot('#1e1e1e', ...out(28), 13); ring('#5a5a5a', ...out(28), 13, 2); ring('#333', ...out(28), 8, 1.2); grip();
+  } else if (id === 'racket') {
+    line('#333', 4, hx, hy, ...out(15));
+    const [rx, ry] = out(28);
+    ctx.save(); ctx.translate(rx, ry); ctx.rotate(ha);
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+    for (const k of [-6, 0, 6]) { ctx.beginPath(); ctx.moveTo(k, -9); ctx.lineTo(k, 9); ctx.stroke(); ctx.beginPath(); ctx.moveTo(-12, k * 1.2); ctx.lineTo(12, k * 1.2); ctx.stroke(); }
+    ctx.beginPath(); ctx.ellipse(0, 0, 13, 10, 0, 0, Math.PI * 2); ctx.strokeStyle = '#4d8bff'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore(); grip();
+  } else if (id === 'katana') {
+    line('#1a1a1a', 5, hx, hy, ...out(10));
+    const [gx, gy] = out(10); line('#ffd84a', 3, gx - sn * 6, gy + c * 6, gx + sn * 6, gy - c * 6);
+    line('#dfe6ea', 3.5, ...out(11), ...out(50)); line('#ffffff', 1, ...out(14), ...out(48)); grip();
+  } else if (id === 'thunder') {
+    const ch = p.charging ? p.charge : 0;
+    if (ch > 0) { ctx.shadowColor = '#4fd2ff'; ctx.shadowBlur = 6 + 18 * ch; }
+    dot(ch >= 1 ? '#e8f7ff' : '#3b4a6b', hx, hy, 10.5); ctx.shadowBlur = 0; ring('#9fb3d9', hx, hy, 10.5, 2.2);
+    poly([[hx - 2, hy - 6], [hx + 3, hy - 1], [hx - 1, hy], [hx + 2, hy + 6], [hx - 3, hy + 1], [hx + 1, hy]], '#ffd23f');
+    if (ch > 0.05) for (let i = 0; i < 3; i++) { const a = rand(0, 6.28); line('#4fd2ff', 1.5, hx + Math.cos(a) * 11, hy + Math.sin(a) * 11, hx + Math.cos(a + 0.4) * (16 + ch * 10), hy + Math.sin(a + 0.4) * (16 + ch * 10)); }
+  } else if (id === 'magnet') {
+    ctx.save(); ctx.translate(...out(6)); ctx.rotate(ha);
+    ctx.strokeStyle = '#d61f1f'; ctx.lineWidth = 7; ctx.beginPath(); ctx.arc(-2, 0, 8, Math.PI / 2, Math.PI * 1.5); ctx.stroke();
+    ctx.fillStyle = '#d9d9d9'; ctx.fillRect(-3, -11.5, 8, 7); ctx.fillRect(-3, 4.5, 8, 7);
+    ctx.restore();
+    if (p.holding) ring('rgba(79,210,255,0.6)', ...out(10), 14 + Math.sin(performance.now() / 60) * 2, 2);
+  } else if (id === 'boomerang') {
+    if (p.boom) { dot(p.body, hx, hy, 4.5); ring(p.edge, hx, hy, 4.5, 1.5); }
+    else { drawBoomShape(...out(8), ha); grip(); }
+  } else if (id === 'chicken') {
+    oval('#ffe14d', ...out(20), 15, 6, ha, '#b89a00', 1.5);
+    dot('#ffe14d', ...out(36), 6.5); ring('#b89a00', ...out(36), 6.5, 1.5);
+    const [cx, cy] = out(36); dot('#ff2a2a', cx - c * 2 - sn * 5, cy - sn * 2 + c * 5, 2.6); dot('#ff2a2a', cx - c * 5 - sn * 5, cy - sn * 5 + c * 5, 2.2);
+    poly([out(41), [cx + c * 3 + sn * 3, cy + sn * 3 - c * 3], [cx + c * 3 - sn * 3, cy + sn * 3 + c * 3]], '#ff8c3b');
+    grip();
+  }
+  ctx.lineCap = 'butt';
+}
+function drawBoomShape(x, y, rot) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  poly([[0, -2], [14, -12], [17, -8], [5, 2], [17, 12], [14, 15], [0, 4], [-3, 1]], '#c98f4e', '#6b4420', 1.8);
+  ctx.restore();
+}
 function drawMetalHand(p, hx, hy, ha) {
   const gold = p.arm === 'metalgold', hot = p.heatT > 0, e = p.energy / 100;
   const hr = p.reachT > 0 ? 12 : 9.5;
@@ -2015,9 +2241,9 @@ function drawPlayer(p, time) {
   // right hand: rests on the right side, sweeps across the front when swinging
   let ha = p.face + 1.0, hd = PR + 7;
   if (p.swingT > 0) {
-    const prog = 1 - p.swingT / SWING;
+    const prog = 1 - p.swingT / (SWING * (armOf(p).window || 1)), arc = armOf(p).arc || 1.25;
     ctx.fillStyle = isMetal(p) ? `rgba(79,210,255,${0.22 * (1 - prog * 0.6)})` : `rgba(255,255,255,${0.2 * (1 - prog * 0.6)})`;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, reachOf(p), p.face - 1.2, p.face + 1.3); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, reachOf(p), p.face - arc, p.face + arc); ctx.closePath(); ctx.fill();
     ha = p.face + 1.3 - 2.5 * Math.min(1, prog * 1.6); hd = reachOf(p) - 12;
   } else if (p.swingAge < 0.25) {
     ha = p.face - 1.2 + (p.swingAge / 0.25) * 2.2; hd = PR + 7 + (REACH - 19 - PR) * (1 - p.swingAge / 0.25);
@@ -2029,6 +2255,7 @@ function drawPlayer(p, time) {
   if (!p.dying) {
     const hx = x + Math.cos(ha) * hd, hy = y + Math.sin(ha) * hd;
     if (isMetal(p)) drawMetalHand(p, hx, hy, ha);
+    else if (p.arm && p.arm !== 'hand') drawArmItem(p, hx, hy, ha);
     else {
       const hr = p.reachT > 0 ? 11 : 8;
       if (p.turbo) { ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14; }
@@ -2176,6 +2403,7 @@ function drawWorld(time) {
     circle(r.x, r.y, r.r + (r.max - r.r) * f); ctx.stroke();
   }
   if (shimmers.length) drawShimmers();
+  for (const p of [P, B]) if (p && p.boom && p.boom.x !== undefined) drawBoomShape(p.boom.x, p.boom.y, p.boom.spin || 0);
   if (mode === 'play' && ball.alive && ball.target) {
     const t = ball.target, a = 0.35 + 0.35 * Math.sin(time * 12);
     ctx.strokeStyle = `rgba(255,42,42,${a})`; ctx.lineWidth = 3;
@@ -2719,7 +2947,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-window.__UP = { get mode() { return mode; }, get P() { return P; }, get B() { return B; }, get ball() { return ball; }, get net() { return NET.role; }, get rtt() { return NET.rtt; }, swing: () => swing(P) };
+window.__UP = { get mode() { return mode; }, get P() { return P; }, get B() { return B; }, get ball() { return ball; }, get net() { return NET.role; }, get rtt() { return NET.rtt; }, swing: () => swing(P), press: () => pressParry(), release: () => releaseParry() };
 })();
 </script>
 <script>

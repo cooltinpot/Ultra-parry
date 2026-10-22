@@ -62,7 +62,7 @@ version = hashlib.sha1(page.encode() + (ROOT / 'vendor' / 'peerjs.min.js').read_
 font_css = re.search(r'href="(https://fonts.googleapis.com/css2[^"]+)"', page).group(1).replace('&amp;', '&')
 sw = f'''// Offline support: cache the game, refresh it in the background when online.
 const CACHE = 'ultra-parry-{version}';
-const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'peerjs.min.js', 'golden-pan-hit1.mp3', 'golden-pan-hit2.mp3', 'golden-pan-perfect.mp3'];
+const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'peerjs.min.js', 'golden-pan-1.mp3', 'golden-pan-2.mp3', 'golden-pan-8.mp3'];
 const FONT_CSS = {json.dumps(font_css)};
 self.addEventListener('install', e => {{
   e.waitUntil(caches.open(CACHE).then(async c => {{

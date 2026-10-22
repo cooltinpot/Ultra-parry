@@ -167,6 +167,29 @@ body {
 .score-grid div { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .score-grid span { font: italic 800 12px var(--body); letter-spacing: 0.12em; text-transform: uppercase; color: #222; }
 .score-grid b { font-size: 30px; font-variant-numeric: tabular-nums; }
+/* high-score numbers: like the RALLY counter, a new color every 20, then gold past 400 with a
+   color-cycling outline, a glow, a shine sweep and sparkles that all grow as the number climbs */
+.score-grid b::before { -webkit-text-stroke: 6px #000; }
+.wa.shiny { filter: drop-shadow(0 0 calc(2px + var(--s, 0) * 9px) rgba(255, 216, 74, 0.95)); }
+.wa.shiny::before {
+  color: #ff3b6b; -webkit-text-stroke: calc(7px + var(--s, 0) * 5px) #ff3b6b; text-shadow: none;
+  animation: hueSpin calc(3s - var(--s, 0) * 1.8s) linear infinite;
+}
+.wa.shiny::after {
+  background-image: linear-gradient(105deg, transparent 42%, rgba(255, 255, 255, calc(0.5 + var(--s, 0) * 0.5)) 50%, transparent 58%),
+    linear-gradient(180deg, #fff6c8 0%, #ffd84a 35%, #e0a800 65%, #9a6b00 100%);
+  background-size: 300% 100%, 100% 100%; background-repeat: no-repeat;
+  animation: shineSweep calc(2.6s - var(--s, 0) * 1.4s) linear infinite;
+}
+@keyframes hueSpin { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+@keyframes shineSweep { from { background-position: 150% 0, 0 0; } to { background-position: -150% 0, 0 0; } }
+.wa .spark {
+  position: absolute; z-index: 2; width: 0.42em; height: 0.42em; background: #fff; pointer-events: none;
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  animation: twinkle 1.1s ease-in-out infinite;
+}
+@keyframes twinkle { 0%, 100% { transform: scale(0.2); opacity: 0.2; } 50% { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .wa.shiny::before, .wa.shiny::after, .wa .spark { animation: none; } }
 .host-box { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 #roomCode { font-size: clamp(56px, 18vw, 96px); letter-spacing: 0.06em; }
 .join-row { display: flex; gap: 14px; align-items: center; }
@@ -1299,7 +1322,24 @@ function refreshScores() {
     ['Top speed', stats.topSpeed], ['Wins', stats.wins], ['Hard bot wins', stats.hardWins], ['Online wins', stats.onlineWins], ['Games played', stats.games],
     ['Badges', `${BADGES.filter(skinUnlocked).length}/${BADGES.length}`], ['Perfect parries', stats.perfectsTotal],
     ['Coins', wallet.coins], ['Shop items', `${wallet.owned.length}/${Object.keys(PRICES).length}`]];
-  $('#scoreGrid').innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b class="wa ink sm" data-t="${v}">${v}</b></div>`).join('');
+  $('#scoreGrid').innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b class="wa sm" data-t="${v}">${v}</b></div>`).join('');
+  $('#scoreGrid').querySelectorAll('b').forEach(styleStat);
+}
+// same idea as the RALLY counter, but a step every 20: white below 20, +30° hue per 20, gold past 400
+function styleStat(el) {
+  const n = parseInt((String(el.dataset.t).match(/\d+/) || ['0'])[0], 10);   // "11/23" counts as 11
+  if (n > 400) {
+    const sh = clamp((n - 400) / 300, 0, 1);
+    el.classList.add('gold', 'shiny'); el.style.setProperty('--s', sh.toFixed(2));
+    for (let i = 0, count = 1 + Math.round(sh * 4); i < count; i++) {
+      const sp = document.createElement('i');
+      sp.className = 'spark';
+      sp.style.left = (5 + Math.random() * 80) + '%'; sp.style.top = (Math.random() * 70 - 10) + '%';
+      sp.style.animationDelay = (-Math.random() * 1.1).toFixed(2) + 's';
+      el.append(sp);
+    }
+  } else if (n < 20) el.classList.add('ink');
+  else { el.classList.add('hue'); el.style.setProperty('--h', (30 + (Math.floor(n / 20) - 1) * 30) % 360); }
 }
 
 // ---------- online play ----------

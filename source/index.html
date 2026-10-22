@@ -513,7 +513,7 @@ const sfx = {
   goldPan(perfect) {
     if (!AC) return;
     const buf = perfect ? goldBufs.perfect : goldBufs[Math.random() < 0.5 ? 'hit1' : 'hit2'] || goldBufs.hit1;
-    if (!buf) { tone('sine', 660, 650, 1.2, 0.25); tone('sine', 990, 980, 1.0, 0.12); loadGoldPan(); return; }
+    if (!buf) { loadGoldPan(); return; }   // still loading: the regular BONG covers this hit
     // one golden sound at a time: a new hit cuts off the last one instead of piling up
     try { if (goldSrc) goldSrc.stop(); } catch (e) {}
     const src = AC.createBufferSource(), g = AC.createGain();
@@ -1162,7 +1162,8 @@ function fxParry(p, perfect, fast, turbo, x, y, speed, od, lab) {
   if (fast) whiteFlash = 1;
   if (lab) {
     addText(lab, x, y - 62, lab === 'HOME RUN!' || lab === 'MAX ZAP!' || lab === 'MEGA SQUAWK!' || p.arm === 'goldpan' ? '#ffd23f' : '#ffffff', lab === 'HOME RUN!' ? 32 : 24, 0.8);
-    if (p.arm === 'goldpan') { sfx.goldPan(perfect); sparks(x, y, 18, '#ffd84a'); sparks(x, y, 10, '#ffffff'); }
+    // the Golden Pan always BONGs like the regular pan, with its golden sound layered on top
+    if (p.arm === 'goldpan') { sfx.armHit('BONG!'); sfx.goldPan(perfect); sparks(x, y, 18, '#ffd84a'); sparks(x, y, 10, '#ffffff'); }
     else sfx.armHit(lab);
     if (lab === 'SLASH!') for (let i = 0; i < 3; i++) streaks.push({ x: x + rand(-30, 30), y: y + rand(-30, 30), a: rand(0, 6.28), len: 120, sp: 900, life: 0.25, t: 0 });
     if (lab.includes('ZAP')) sparks(x, y, 16, '#4fd2ff');
@@ -1477,7 +1478,7 @@ function buildArmTiles() {
     b.addEventListener('click', () => {
       if (armUnlocked(a)) { prefs.arm = a.id; savePrefs(); P.arm = a.id; }
       previewArm = a.id; refreshCustom(); showArmInfo(a);
-      if (a.id === 'goldpan') { initAudio(); sfx.goldPan(); }   // a hit sound, as a preview
+      if (a.id === 'goldpan') { initAudio(); sfx.armHit('BONG!'); sfx.goldPan(); }   // a hit sound, as a preview
     });
     $('#armGrid').append(b);
     const main = ctx; ctx = c.getContext('2d');
